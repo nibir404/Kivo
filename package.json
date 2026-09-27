@@ -10,7 +10,10 @@
     "preview": "vite preview",
     "dev:ui": "vite",
     "dev:daemon": "tsx watch --env-file-if-exists=.env server/index.ts",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "check": "npm run typecheck && npm run lint && npm test"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",

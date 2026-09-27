@@ -24,7 +24,7 @@ export const SEED_EDGES: SystemEdge[] = [
 
 /** Nodes/edges contributed when a service is built from the IR. */
 export function nodesForService(id: string, name: string, tech: string, purpose: string, deps: string[], usesCache: boolean) {
-  const node: SystemNode = { id, label: name, kind: "service", tech, purpose, concept: "fastapi", serviceId: id, status: "running", group: "Backend" }
+  const node: SystemNode = { id, label: name, kind: "service", tech, purpose, concept: /fastapi/i.test(tech) ? "fastapi" : undefined, serviceId: id, status: "running", group: "Backend" }
   const edges: SystemEdge[] = [
     { id: `e-gw-${id}`, source: "gateway", target: id, kind: "request", label: `/${id === "authentication" ? "auth" : id}` },
     { id: `e-${id}-pg`, source: id, target: "postgres", kind: "storage" },

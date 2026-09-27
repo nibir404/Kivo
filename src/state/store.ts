@@ -2,7 +2,7 @@ import { create } from "zustand"
 import { persist } from "zustand/middleware"
 import { CONCEPTS } from "@/core/concepts"
 import { analyzeRepository, SAMPLE_REPO } from "@/core/detect"
-import { parseIntent } from "@/core/intent"
+import { languageReason, parseIntent } from "@/core/intent"
 import { planFor, testsFor } from "@/core/plan"
 import { logsFor, nextTrace } from "@/core/runtime"
 import { nodesForService, PROJECT_NAME, SEED_EDGES, SEED_EXPERIENCES, SEED_LIBRARY, SEED_NODES } from "@/core/seed"
@@ -302,7 +302,19 @@ export const useKivo = create<State>()(
         set((st) => {
           const stack = { ...st.stack, ...s }
           if (s.language && !s.framework) stack.framework = frameworkFirst(s.language)
-          const draft = st.draft ? { ...st.draft, implementation: { ...stack, cache: st.draft.cache ? stack.cache : undefined } } : null
+          // Keep the draft's own "Language & framework" decision in step with the picker.
+          const choice = `${languageName(stack.language)} · ${frameworkName(stack.language, stack.framework)}`
+          const draft = st.draft
+            ? {
+                ...st.draft,
+                implementation: { ...stack, cache: st.draft.cache ? stack.cache : undefined },
+                decisions: st.draft.decisions.map((d) =>
+                  d.topic === "Language & framework" && d.choice !== choice
+                    ? { ...d, choice, reason: languageReason(stack.language) }
+                    : d,
+                ),
+              }
+            : null
           return { stack, draft }
         }),
 
@@ -348,7 +360,7 @@ export const useKivo = create<State>()(
         const files = [...new Set(b.steps.flatMap((x) => x.artifacts))]
         const tests = testsFor(spec)
         set((s) => ({
-          build: { ...b, index: b.steps.length, finished: true },
+          build: { ...b, index: b.steps.length, finished: true, ok: true },
           services: s.services.map((x) => (x.id === spec.id ? { ...x, status: "running", files, tests } : x)),
           nodes: [...s.nodes.filter((n) => n.id !== node.id), node],
           edges: [...s.edges.filter((e) => !edges.some((ne) => ne.id === e.id)), ...edges],

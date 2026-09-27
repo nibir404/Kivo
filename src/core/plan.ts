@@ -1,5 +1,5 @@
 import type { PlanStep, ServiceSpec } from "./types"
-import { frameworkName, languageName } from "./stacks"
+import { frameworkName, languageName, toolchainFor } from "./stacks"
 
 /**
  * Architecture Planner → Implementation Plan.
@@ -13,8 +13,9 @@ export function planFor(spec: ServiceSpec): PlanStep[] {
   const lang = languageName(spec.implementation.language)
   const fw = frameworkName(spec.implementation.language, spec.implementation.framework)
   const py = spec.implementation.language === "python"
+  const tc = toolchainFor(spec.implementation.language)
   const dir = `services/${spec.id}`
-  const ext = py ? "py" : "ts"
+  const ext = tc.ext
   const isAuth = isAuthService(spec)
 
   const steps: PlanStep[] = [
@@ -52,8 +53,8 @@ export function planFor(spec: ServiceSpec): PlanStep[] {
       engine: "Implementation Agent",
       what: `Writing the ${spec.entities.map((e) => e.name).join(", ")} schema and a migration.`,
       why: `${spec.name} owns this data; defining it explicitly lets ${spec.storage.type} enforce integrity (unique emails, non-null fields).`,
-      tech: py ? "SQLAlchemy 2.0 (SQLite in dev, PostgreSQL in prod)" : "Drizzle ORM",
-      alternatives: py ? ["Tortoise ORM", "raw SQL"] : ["Prisma", "Kysely"],
+      tech: py ? "SQLAlchemy 2.0 (SQLite in dev, PostgreSQL in prod)" : tc.orm,
+      alternatives: py ? ["Tortoise ORM", "raw SQL"] : ["raw SQL"],
       consequences: "Schema changes are versioned migrations you can review and roll back.",
       concept: "db-index",
       artifacts: py ? [`${dir}/db.py`, `${dir}/outbox.py`, `${dir}/kv.py`, `${dir}/models.py`, `${dir}/migrations/0001_${spec.id}.sql`] : [`${dir}/db.${ext}`, `${dir}/models.${ext}`],
@@ -98,7 +99,7 @@ export function planFor(spec: ServiceSpec): PlanStep[] {
         engine: "Implementation Agent",
         what: "Issuing 15-minute access tokens and rotating 14-day refresh tokens stored in Redis.",
         why: "Short-lived signed tokens let every service verify users without a database call; refresh tokens keep users logged in and remain revocable.",
-        tech: "PyJWT (HS256) + Redis",
+        tech: py ? "PyJWT (HS256) + Redis" : "JWT (HS256) + Redis",
         alternatives: ["Server-side sessions only", "Paseto"],
         consequences: "Logout and reuse-detection work by revoking refresh-token families.",
         concept: "jwt",
@@ -142,26 +143,26 @@ export function planFor(spec: ServiceSpec): PlanStep[] {
       id: "install",
       title: "Installing dependencies",
       executor: "deterministic",
-      engine: py ? "pip (venv)" : "pnpm",
+      engine: tc.install,
       what: "Resolving and locking package versions.",
       why: "Reproducible installs; the lockfile is the source of truth, never the model.",
-      tech: py ? "requirements derived from imports → pip install" : "pnpm install --frozen-lockfile",
+      tech: py ? "requirements derived from imports → pip install" : `${tc.install} install`,
       alternatives: [],
       consequences: "Any machine produces the same dependency tree.",
-      artifacts: py ? [`${dir}/requirements.txt`, `${dir}/pytest.ini`] : ["pnpm-lock.yaml"],
+      artifacts: py ? [`${dir}/requirements.txt`, `${dir}/pytest.ini`] : [],
       durationMs: 900,
     },
     {
       id: "tests",
       title: "Writing & running tests",
       executor: "deterministic",
-      engine: py ? "pytest" : "vitest",
-      what: "Generating one test per requirement, linting with pyflakes, then running pytest in the sandbox.",
+      engine: tc.test,
+      what: py ? "Generating one test per requirement, linting with pyflakes, then running pytest in the sandbox." : `Generating one test per requirement and running them with ${tc.test}.`,
       why: "The service is only marked ready when lint is clean and every requirement's test passes in the sandbox.",
-      tech: py ? "pytest + FastAPI TestClient" : "vitest + supertest",
+      tech: py ? "pytest + FastAPI TestClient" : tc.test,
       alternatives: [],
       consequences: "Failures are fed back to the Implementation Agent with the exact error for a repair attempt.",
-      artifacts: py ? [`${dir}/tests/conftest.py`, `${dir}/tests/test_${spec.id.replace(/-/g, "_")}.py`] : [`${dir}/tests/${spec.id}.test.${ext}`],
+      artifacts: py ? [`${dir}/tests/conftest.py`, `${dir}/tests/test_${spec.id.replace(/-/g, "_")}.py`] : [`${dir}/tests/${spec.id}_test.${ext}`],
       durationMs: 1600,
     },
     {
@@ -171,7 +172,7 @@ export function planFor(spec: ServiceSpec): PlanStep[] {
       engine: "Process Manager",
       what: "Starting the service process, waiting for /health, and reading its live OpenAPI routes.",
       why: "A passing test suite isn't proof it runs; a healthy process with traces is.",
-      tech: py ? "uvicorn · /health" : "node · /health",
+      tech: `${tc.runtime} · /health`,
       alternatives: [],
       consequences: `${spec.name} appears live in Observe.`,
       concept: "docker",

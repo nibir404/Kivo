@@ -166,6 +166,13 @@ function genericTemplate(text: string): Template {
   }
 }
 
+/** Why this language: the repository's own backend, or an explicit choice that runs alongside it. */
+export function languageReason(language: string) {
+  return language === "python"
+    ? "Matches the existing backend detected in this repository — one runtime, shared conventions."
+    : `Chosen for this service. The rest of this project runs Python · FastAPI, so ${languageName(language)} runs as its own process with its own toolchain.`
+}
+
 export function parseIntent(text: string, stack: StackChoice): ServiceSpec {
   const t = TEMPLATES.find((x) => x.match.test(text)) ?? genericTemplate(text)
   const requirements: Requirement[] = t.requirements.map(([id, title, description]) => ({ id, title, description }))
@@ -178,7 +185,7 @@ export function parseIntent(text: string, stack: StackChoice): ServiceSpec {
     {
       topic: "Language & framework",
       choice: `${lang} · ${fw}`,
-      reason: "Matches the existing backend detected in this repository — one runtime, shared conventions.",
+      reason: languageReason(stack.language),
       alternatives: ["TypeScript · Express", "Go · Chi"].filter((a) => !a.startsWith(lang)),
     },
     {

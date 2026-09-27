@@ -16,6 +16,8 @@ export interface Health {
   project: string
   active: string
   providers: ProviderInfo[]
+  /** Per-language build readiness on this machine (only languages Kivo can build). */
+  toolchains?: Record<string, { language: string; ok: boolean; version?: string; message?: string }>
 }
 
 async function get<T>(url: string): Promise<T> {
@@ -31,7 +33,7 @@ export const api = {
   read: (path: string) => get<{ content: string }>(`/api/fs/read?path=${encodeURIComponent(path)}`),
   write: async (path: string, content: string) => {
     const res = await fetch("/api/fs/write", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, content }) })
-    if (!res.ok) throw new Error((await res.json()).error)
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `Couldn't save ${path} (HTTP ${res.status})`)
   },
   gitLog: () => get<{ log: string }>("/api/git/log"),
   providers: () => get<Omit<Health, "ai" | "project">>("/api/providers"),
@@ -59,7 +61,14 @@ export async function sse<E>(url: string, body: unknown, onEvent: (e: E) => void
       const chunk = buf.slice(0, i)
       buf = buf.slice(i + 2)
       const line = chunk.split("\n").find((l) => l.startsWith("data:"))
-      if (line) onEvent(JSON.parse(line.slice(5)))
+      if (!line) continue
+      let event: E
+      try {
+        event = JSON.parse(line.slice(5))
+      } catch {
+        continue // a malformed frame is skipped, not fatal
+      }
+      onEvent(event)
     }
   }
 }

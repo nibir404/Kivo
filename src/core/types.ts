@@ -71,6 +71,8 @@ export interface ServiceSpec {
   status: ServiceStatus
   files: string[]
   tests: { name: string; status: "pass" | "fail" | "pending" }[]
+  /** Set when an existing (detected) service already uses this name; the new one is kept separate. */
+  sameNameAs?: string
   /** Open questions the Intent Agent could not resolve on its own. */
   questions?: string[]
 }

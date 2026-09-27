@@ -2,6 +2,7 @@ import { toast } from "sonner"
 import { CONCEPTS } from "@/core/concepts"
 import { answer, assembleContext } from "@/core/context"
 import { parseIntent } from "@/core/intent"
+import { detectStack, frameworkName, languageName } from "@/core/stacks"
 import type { ContextItem, KivoRef, LogLine, ServiceSpec } from "@/core/types"
 import { api, sse, subscribe } from "@/lib/api"
 import { useKivo, type StepRun } from "./store"
@@ -88,20 +89,42 @@ export async function saveFile(path: string) {
 
 // ─── Describe → Understand ──────────────────────────────────────────────────
 
+/**
+ * A new service must not silently replace one that already exists in the repository under the same
+ * id (e.g. a Java "Notifications" vs the detected Python one) — it gets its own id and directory.
+ */
+function uniqueId(spec: ServiceSpec): ServiceSpec {
+  const taken = S().services.find((x) => x.id === spec.id && x.intent === "(detected from repository)")
+  if (!taken) return spec
+  const base = `${spec.id}-${spec.implementation.language}`
+  let id = base
+  for (let n = 2; S().services.some((x) => x.id === id && x.intent === "(detected from repository)"); n++) id = `${base}-${n}`
+  return { ...spec, id, sameNameAs: taken.id }
+}
+
 export async function understand(text: string) {
+  // A language named in the description ("…using Java") wins over the stack picker, and the picker follows.
+  const named = detectStack(text)
+  if (named) S().setStack(named)
   const s = S()
   if (!s.ai?.ai) {
-    s.setDraft(parseIntent(text, s.stack))
+    s.setDraft(uniqueId(parseIntent(text, s.stack)))
     return
   }
   set({ understanding: { text, reasoning: "" }, draft: null, activeServiceId: null, mode: "build" })
+  const services = s.services.map((x) => ({ id: x.id, name: x.name, language: languageName(x.implementation.language), framework: frameworkName(x.implementation.language, x.implementation.framework), endpoints: x.api.endpoints.map((e) => `${e.method} ${e.path}`) }))
+  let got = false
   try {
-    await sse<{ t: string; channel?: string; text?: string; spec?: ServiceSpec; waitMs?: number; message?: string }>("/api/ai/intent", { text, stack: s.stack }, (e) => {
+    await sse<{ t: string; channel?: string; text?: string; spec?: ServiceSpec; waitMs?: number; message?: string }>("/api/ai/intent", { text, stack: s.stack, services }, (e) => {
       if (e.t === "delta" && e.channel === "reasoning") set((st) => (st.understanding ? { understanding: { ...st.understanding, reasoning: st.understanding.reasoning + e.text, waiting: undefined } } : {}))
       if (e.t === "wait" && e.waitMs) set((st) => (st.understanding ? { understanding: { ...st.understanding, waiting: `Rate limit — retrying in ${Math.ceil(e.waitMs! / 1000)}s` } } : {}))
-      if (e.t === "result" && e.spec) S().setDraft(e.spec)
+      if (e.t === "result" && e.spec) {
+        got = true
+        S().setDraft(uniqueId(e.spec))
+      }
       if (e.t === "error") throw new Error(e.message)
     })
+    if (!got) throw new Error("The connection closed before Kivo finished reading your request.")
   } catch (err) {
     set((st) => ({ understanding: st.understanding ? { ...st.understanding, error: String((err as Error).message) } : null }))
   }
@@ -213,6 +236,8 @@ export async function build() {
           throw new Error(e.message)
       }
     })
+    // The stream can end without a "done" event (daemon restarted, connection dropped). Never leave it "building".
+    if (!S().build?.finished) throw new Error("The connection to the Kivo daemon closed before the build finished.")
   } catch (err) {
     flush()
     S().finishRealBuild(false, { url, routes, tests, error: String((err as Error).message) })

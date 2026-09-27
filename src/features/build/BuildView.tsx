@@ -1,21 +1,23 @@
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { ArrowRight, ArrowUp, Check, ChevronDown, PencilLine, CircleDashed, FileCode2, FlaskConical, Loader2, MessageSquare, Network, Play, Sparkles, SquareTerminal, X } from "lucide-react"
+import { AlertTriangle, ArrowRight, Bell, Check, ChevronDown, CircleDashed, Clock, CreditCard, FileCode2, FlaskConical, Info, KeyRound, Lightbulb, Loader2, MessageSquare, Network, PencilLine, Play, Quote, RotateCw, Sparkles, SquareTerminal, Wrench, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Kbd } from "@/components/ui/kbd"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { specToYaml } from "@/core/intent"
-import { CACHES, DATABASES, frameworkName, frameworksFor, languageName, LANGUAGES } from "@/core/stacks"
-import type { ServiceSpec, TechCategory } from "@/core/types"
+import { BUILDABLE_LANGUAGES, CACHES, DATABASES, frameworkName, frameworksFor, languageName, LANGUAGES, toolchainFor } from "@/core/stacks"
+import type { ServiceSpec, ServiceStatus, TechCategory } from "@/core/types"
 import { cn } from "@/lib/utils"
 import { build as runBuild, openFile, understand } from "@/state/runners"
 import { useKivo } from "@/state/store"
 import { ApiClient } from "./ApiClient"
 import { BuildTimeline } from "./BuildTimeline"
+import { Journey, useTechnical } from "./journey"
 import { SectionLabel, StatusDot } from "@/shell/bits"
 import { Capturable, CaptureScope, useUi } from "@/shell/capture"
 import { focusWhenReady } from "@/shell/Preferences"
@@ -23,7 +25,7 @@ import { focusWhenReady } from "@/shell/Preferences"
 export function BuildView() {
   const { draft, activeServiceId, understanding } = useKivo()
   if (understanding) return <Understanding />
-  if (draft) return <IntentReview spec={draft} />
+  if (draft) return <IntentReview key={`${draft.id}:${draft.intent}`} spec={draft} />
   if (activeServiceId) return <ServiceWorkspace id={activeServiceId} />
   return <BuildHome />
 }
@@ -31,13 +33,20 @@ export function BuildView() {
 // ─── Home: analysis + intent ─────────────────────────────────────────────────
 
 const EXAMPLES = [
-  "Create an authentication service where users can register with email and password, verify their email, log in, refresh their session, and reset their password.",
-  "Add Stripe payments.",
-  "Create a notification system.",
+  {
+    icon: KeyRound,
+    label: "Sign-up & login",
+    text: "Create an authentication service where users can register with email and password, verify their email, log in, refresh their session, and reset their password.",
+  },
+  { icon: CreditCard, label: "Online payments", text: "Add Stripe payments." },
+  { icon: Bell, label: "Notifications", text: "Create a notification system." },
 ]
+
+const STATUS_LABEL: Partial<Record<ServiceStatus, string>> = { draft: "Draft", planned: "Planned", building: "Building", ready: "Ready", running: "Running", failed: "Needs attention" }
 
 function BuildHome() {
   const { analysis, services, openService, build, setMode, select } = useKivo()
+  const technical = useTechnical()
   const focusAsk = useUi((s) => s.focusAsk)
   const openRight = useUi((s) => s.openRight)
   const [detailsOpen, setDetailsOpen] = useState(false)
@@ -65,10 +74,10 @@ function BuildHome() {
   return (
     <ScrollArea className="h-full">
       <div className="mx-auto max-w-3xl space-y-10 px-6 py-12 sm:px-8">
-        <div className="space-y-5">
-          <div className="space-y-1.5">
-            <h1 className="text-2xl font-semibold tracking-tight">What do you want to build?</h1>
-            <p className="text-sm text-muted-foreground">Describe it in plain words. You'll review exactly what Kivo understood before anything is generated.</p>
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <h1 className="text-[28px] leading-tight font-semibold tracking-tight">What do you want to build?</h1>
+            <p className="text-[15px] text-muted-foreground">Describe it the way you'd explain it to a colleague. Kivo shows you its plan first, and nothing is built until you say so.</p>
           </div>
           <IntentComposer />
         </div>
@@ -85,24 +94,11 @@ function BuildHome() {
               <div className="truncate text-sm font-medium">{lastBuilt.name}</div>
             </div>
             <span className="text-xs text-muted-foreground">
-              {build.finished ? (build.ok ? "Ready" : build.real ? "Needs attention" : "Simulated") : `Step ${Math.min(build.index + 1, build.steps.length)} of ${build.steps.length}`}
+              {build.finished ? (!build.real ? "Preview ready" : build.ok ? "Ready" : "Needs attention") : `Step ${Math.min(build.index + 1, build.steps.length)} of ${build.steps.length}`}
             </span>
             <ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
           </button>
         )}
-
-        <section className="space-y-3">
-          <SectionLabel>Or start somewhere else</SectionLabel>
-          <div className="grid gap-2 sm:grid-cols-3">
-            {paths.map((p) => (
-              <button key={p.title} onClick={p.go} className="group rounded-xl border p-3.5 text-left transition-colors hover:bg-accent/40">
-                <p.icon className="size-4 text-muted-foreground transition-colors group-hover:text-foreground" />
-                <div className="mt-3 text-[13px] font-medium">{p.title}</div>
-                <div className="text-xs text-muted-foreground">{p.body}</div>
-              </button>
-            ))}
-          </div>
-        </section>
 
         <section className="space-y-3">
           <SectionLabel action={<span className="normal-case">{services.length} total</span>}>Your services</SectionLabel>
@@ -112,12 +108,33 @@ function BuildHome() {
                 <div className="flex items-center gap-2">
                   <StatusDot status={s.status} />
                   <span className="text-sm font-medium">{s.name}</span>
-                  <span className="ml-auto text-[11px] text-muted-foreground capitalize">{s.status}</span>
+                  <span className="ml-auto text-[11px] text-muted-foreground">{STATUS_LABEL[s.status] ?? s.status}</span>
                 </div>
                 <p className="mt-1 line-clamp-2 text-[13px] text-muted-foreground">{s.purpose}</p>
-                <div className="mt-3 font-mono text-[11px] text-muted-foreground">
-                  {languageName(s.implementation.language)} · {frameworkName(s.implementation.language, s.implementation.framework)} · {s.api.endpoints.length} endpoints
+                <div className="mt-3 text-[11px] text-muted-foreground">
+                  {technical ? (
+                    <span className="font-mono">
+                      {languageName(s.implementation.language)} · {frameworkName(s.implementation.language, s.implementation.framework)} · {s.api.endpoints.length} endpoints
+                    </span>
+                  ) : (
+                    <>
+                      {s.api.endpoints.length} {s.api.endpoints.length === 1 ? "action" : "actions"} · {frameworkName(s.implementation.language, s.implementation.framework)}
+                    </>
+                  )}
                 </div>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <SectionLabel>Other things you can do</SectionLabel>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {paths.map((p) => (
+              <button key={p.title} onClick={p.go} className="group rounded-xl border p-3.5 text-left transition-colors hover:bg-accent/40">
+                <p.icon className="size-4 text-muted-foreground transition-colors group-hover:text-foreground" />
+                <div className="mt-3 text-[13px] font-medium">{p.title}</div>
+                <div className="text-xs text-muted-foreground">{p.body}</div>
               </button>
             ))}
           </div>
@@ -189,10 +206,15 @@ function IntentComposer() {
     if (useUi.getState().prefill) useUi.getState().setPrefill(null)
   }, [])
   const go = () => text.trim() && understand(text)
+  const input = useRef<HTMLTextAreaElement>(null)
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border bg-background shadow-xs focus-within:ring-1 focus-within:ring-ring">
+      <div className="rounded-2xl border bg-background shadow-xs transition-shadow focus-within:border-foreground/30 focus-within:shadow-md">
+        <label htmlFor="intent-input" className="sr-only">
+          Describe what you want to build
+        </label>
         <Textarea
+          ref={input}
           id="intent-input"
           autoFocus
           value={text}
@@ -203,22 +225,37 @@ function IntentComposer() {
               go()
             }
           }}
-          placeholder="Create an authentication service where users can register, log in and reset their password…"
-          className="min-h-24 resize-none border-0 bg-transparent! px-4 pt-4 text-[15px] shadow-none focus-visible:ring-0"
+          placeholder="e.g. A way for people to sign up, log in and reset their password"
+          className="min-h-28 resize-none border-0 bg-transparent! px-4 pt-4 text-[15px] leading-relaxed shadow-none focus-visible:ring-0"
         />
-        <div className="flex items-center justify-between px-3 pb-3">
-          <span className="text-[11px] text-muted-foreground">
-            Kivo will show you what it understood before building{ai?.ai ? ` · ${ai.model}` : " · offline templates"}.
+        <div className="flex items-center gap-3 px-3 pb-3">
+          <span className="hidden text-[11px] text-muted-foreground sm:inline">
+            <Kbd>↵</Kbd> to continue · <Kbd>⇧↵</Kbd> new line
           </span>
-          <Button size="icon-sm" onClick={go} disabled={!text.trim()} aria-label="Understand">
-            <ArrowUp />
+          {!ai?.ai && (
+            <span title="No AI provider is connected, so builds are simulated. Add a key in .env to generate real code." className="rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground">
+              Preview mode
+            </span>
+          )}
+          <Button size="sm" onClick={go} disabled={!text.trim()} className="ml-auto gap-1.5">
+            Continue <ArrowRight />
           </Button>
         </div>
       </div>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-xs text-muted-foreground">Try an example:</span>
         {EXAMPLES.map((e) => (
-          <button key={e} onClick={() => setText(e)} className="max-w-full truncate rounded-full border px-3 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
-            {e.length > 70 ? `${e.slice(0, 68)}…` : e}
+          <button
+            key={e.label}
+            title={e.text}
+            onClick={() => {
+              setText(e.text)
+              input.current?.focus()
+            }}
+            className="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <e.icon className="size-3.5" />
+            {e.label}
           </button>
         ))}
       </div>
@@ -231,42 +268,82 @@ function IntentComposer() {
 function Understanding() {
   const u = useKivo((s) => s.understanding)!
   const ai = useKivo((s) => s.ai)
-  const end = useRef<HTMLDivElement>(null)
+  const technical = useTechnical()
+  const [showThinking, setShowThinking] = useState(technical)
+  const box = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    end.current?.scrollIntoView({ block: "nearest" })
-  }, [u.reasoning.length])
+    if (box.current) box.current.scrollTop = box.current.scrollHeight
+  }, [u.reasoning.length, showThinking])
+  const editDescription = () => {
+    useUi.getState().setPrefill(u.text)
+    useKivo.setState({ understanding: null })
+    focusWhenReady("intent-input")
+  }
+
   return (
     <ScrollArea className="h-full">
-      <div className="mx-auto max-w-3xl space-y-6 px-8 py-10">
-        <div className="space-y-3">
-          <div className="text-xs text-muted-foreground">You said</div>
-          <p className="border-l-2 pl-3 text-[15px]">{u.text}</p>
-        </div>
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            {u.error ? <X className="size-4 text-destructive" /> : <Loader2 className="size-4 animate-spin" />}
-            {u.error ? "Couldn't understand that" : "Understanding your request…"}
-            <span className="font-mono text-[11px] font-normal text-muted-foreground">Intent Agent · {ai?.model}</span>
-          </div>
-          {u.waiting && <div className="text-xs text-warning">{u.waiting}</div>}
-          {u.error ? (
-            <div className="space-y-3">
-              <p className="text-[13px] text-destructive">{u.error}</p>
-              <Button size="sm" variant="outline" onClick={() => understand(u.text)}>
-                Try again
+      <div className="mx-auto max-w-3xl space-y-8 px-6 py-10 sm:px-8">
+        <Journey stage="Review" />
+        <YouSaid text={u.text} />
+
+        {u.error ? (
+          <div className="kivo-in space-y-4 rounded-2xl border border-destructive/30 p-5">
+            <div className="flex items-start gap-3">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+                <AlertTriangle className="size-4" />
+              </div>
+              <div className="space-y-1">
+                <div className="text-[15px] font-medium">Kivo couldn't read that request</div>
+                <p className="text-[13px] text-muted-foreground">This is usually temporary. Try again, or reword your description.</p>
+                <p className="pt-1 font-mono text-[12px] text-muted-foreground">{u.error}</p>
+              </div>
+            </div>
+            <div className="flex gap-2 pl-11">
+              <Button size="sm" onClick={() => understand(u.text)}>
+                <RotateCw /> Try again
+              </Button>
+              <Button size="sm" variant="outline" onClick={editDescription}>
+                <PencilLine /> Edit description
               </Button>
             </div>
-          ) : (
-            <div className="rounded-xl border bg-muted/30 p-4">
-              <div className="mb-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Agent reasoning · live</div>
-              <p className="font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
-                {u.reasoning || "…"}
-                <span className="kivo-pulse ml-0.5 inline-block h-3 w-1.5 translate-y-0.5 bg-foreground/60" />
-              </p>
-              <div ref={end} />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center gap-4">
+              <div className="relative flex size-10 shrink-0 items-center justify-center rounded-full border">
+                <Sparkles className="kivo-pulse size-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-[17px] font-medium">Working out what you need…</div>
+                <p className="text-[13px] text-muted-foreground">{u.waiting ?? "Picking out the features, the data to store and the key design choices. This usually takes a few seconds."}</p>
+              </div>
             </div>
-          )}
-        </div>
+            <div className="space-y-2 pl-14">
+              {["Features you asked for", "Information it needs to keep", "How it should be built"].map((t, i) => (
+                <div key={t} className="flex items-center gap-2 text-[13px] text-muted-foreground">
+                  <Loader2 className="size-3.5 animate-spin" style={{ animationDelay: `${i * 150}ms` }} /> {t}
+                </div>
+              ))}
+            </div>
+            {ai?.ai && (
+              <div className="pl-14">
+                <button onClick={() => setShowThinking((v) => !v)} aria-expanded={showThinking} className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground">
+                  <ChevronDown className={cn("size-3.5 transition-transform", !showThinking && "-rotate-90")} />
+                  {showThinking ? "Hide" : "Show"} the AI's thinking
+                </button>
+                {showThinking && (
+                  <div ref={box} className="kivo-in mt-2 max-h-72 overflow-auto rounded-xl border bg-muted/30 p-4">
+                    <div className="mb-2 font-mono text-[11px] text-muted-foreground/70">Intent Agent · {ai.model}</div>
+                    <p className="font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
+                      {u.reasoning || "…"}
+                      <span className="kivo-pulse ml-0.5 inline-block h-3 w-1.5 translate-y-0.5 bg-foreground/60" />
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </ScrollArea>
   )
@@ -275,131 +352,261 @@ function Understanding() {
 // ─── Intent review: "I understand this as" ───────────────────────────────────
 
 function IntentReview({ spec }: { spec: ServiceSpec }) {
-  const { updateDraft, discardDraft, stack, setStack, ai } = useKivo()
+  const { updateDraft, discardDraft, stack, setStack, ai, daemon, services } = useKivo()
+  const technical = useTechnical()
   const frameworks = frameworksFor(stack.language)
+  const real = daemon && !!ai?.ai
+  const lang = spec.implementation.language
+  const buildable = toolchainFor(lang).buildable
+  const machine = ai?.toolchains?.[lang]
+  // Real builds need a pipeline for the language AND the tools on this machine. Preview builds are simulated either way.
+  const blocked = real && (!buildable || machine?.ok === false)
+  const twin = spec.sameNameAs ? services.find((x) => x.id === spec.sameNameAs) : undefined
+  // Remember the full proposal so features can be switched off and back on again.
+  const [original] = useState(() => ({ requirements: spec.requirements, endpoints: spec.api.endpoints }))
+  const included = new Set(spec.requirements.map((r) => r.id))
+  const [detailsOpen, setDetailsOpen] = useState(technical)
+
+  const toggle = (id: string) => {
+    const next = new Set(included)
+    if (next.has(id)) {
+      if (next.size === 1) return
+      next.delete(id)
+    } else next.add(id)
+    const excluded = new Set(original.requirements.map((r) => r.id).filter((x) => !next.has(x)))
+    updateDraft({ requirements: original.requirements.filter((r) => next.has(r.id)), api: { ...spec.api, endpoints: original.endpoints.filter((e) => !excluded.has(e.requirement)) } })
+  }
+  const editDescription = () => {
+    useUi.getState().setPrefill(spec.intent)
+    discardDraft()
+    focusWhenReady("intent-input")
+  }
+  const stackLine = [frameworkName(stack.language, stack.framework), stack.database ?? spec.storage.type, spec.cache ? stack.cache : undefined].filter(Boolean).join(" · ")
 
   return (
-    <ScrollArea className="h-full">
-      <div className="mx-auto max-w-3xl space-y-8 px-8 py-10">
-        <div className="space-y-3">
-          <div className="text-xs text-muted-foreground">You said</div>
-          <p className="border-l-2 pl-3 text-[15px]">{spec.intent}</p>
-        </div>
-
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold tracking-tight">I understand this as:</h2>
-          <div className="rounded-xl border p-4 font-mono text-[13px]">
-            <Capturable refObj={{ kind: "service", id: spec.id, label: spec.name }} className="-mx-1 inline-block px-1 font-sans font-medium">
-              {spec.name}
-            </Capturable>
-            <ul className="mt-1">
-              {spec.requirements.map((r, i) => (
-                <li key={r.id} className="group flex items-center gap-2">
-                  <span className="text-muted-foreground">{i === spec.requirements.length - 1 ? "└──" : "├──"}</span>
-                  <span className="whitespace-nowrap">{r.title}</span>
-                  <span className="truncate font-sans text-xs text-muted-foreground">{r.description}</span>
-                  {spec.requirements.length > 1 && (
-                    <button
-                      aria-label={`Remove ${r.title}`}
-                      className="ml-auto opacity-0 group-hover:opacity-100"
-                      onClick={() => updateDraft({ requirements: spec.requirements.filter((x) => x.id !== r.id), api: { ...spec.api, endpoints: spec.api.endpoints.filter((e) => e.requirement !== r.id) } })}
-                    >
-                      <X className="size-3.5 text-muted-foreground" />
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
+    <div className="flex h-full flex-col">
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="kivo-in mx-auto max-w-3xl space-y-10 px-6 py-10 sm:px-8">
+          <div className="space-y-6">
+            <Journey stage="Review" />
+            <div className="space-y-2">
+              <div className="text-[13px] text-muted-foreground">Here's what Kivo will build</div>
+              <Capturable refObj={{ kind: "service", id: spec.id, label: spec.name }} className="-mx-1 inline-block px-1 text-[28px] leading-tight font-semibold tracking-tight data-active:bg-transparent data-active:ring-0 hover:bg-accent/60">
+                {spec.name}
+              </Capturable>
+              <p className="text-[15px] text-muted-foreground">{spec.purpose}</p>
+            </div>
+            <YouSaid text={spec.intent} onEdit={editDescription} />
           </div>
-        </section>
 
-        {spec.questions && spec.questions.length > 0 && (
-          <section className="space-y-2 rounded-xl border border-dashed p-4">
-            <div className="text-[13px] font-medium">Open questions</div>
-            <p className="text-xs text-muted-foreground">The Intent Agent made sensible defaults for these. Refine your description if a default is wrong.</p>
-            <ul className="list-disc space-y-1 pl-5 text-[13px]">
-              {spec.questions.map((q, i) => (
-                <li key={i}>{typeof q === "string" ? q : JSON.stringify(q)}</li>
-              ))}
+          <section className="space-y-3">
+            <div className="flex items-baseline justify-between px-1">
+              <h2 className="text-[15px] font-medium">What it will do</h2>
+              <span className="text-xs text-muted-foreground">
+                {included.size} of {original.requirements.length} features · untick anything you don't need
+              </span>
+            </div>
+            <ul className="divide-y rounded-2xl border">
+              {original.requirements.map((r) => {
+                const on = included.has(r.id)
+                const locked = on && included.size === 1
+                return (
+                  <li key={r.id}>
+                    <label className={cn("flex cursor-pointer items-start gap-3 px-4 py-3.5 transition-colors hover:bg-accent/40", locked && "cursor-default")}>
+                      <input type="checkbox" checked={on} disabled={locked} onChange={() => toggle(r.id)} className="peer sr-only" />
+                      <span
+                        aria-hidden
+                        className={cn(
+                          "mt-0.5 flex size-[18px] shrink-0 items-center justify-center rounded-[5px] border transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-ring",
+                          on ? "border-foreground bg-foreground text-background" : "border-muted-foreground/40",
+                        )}
+                      >
+                        {on && <Check className="size-3" strokeWidth={3} />}
+                      </span>
+                      <span className="min-w-0">
+                        <span className={cn("block text-[14px] font-medium", !on && "text-muted-foreground line-through decoration-muted-foreground/40")}>{r.title}</span>
+                        {r.description && <span className="block text-[13px] text-muted-foreground">{r.description}</span>}
+                      </span>
+                    </label>
+                  </li>
+                )
+              })}
             </ul>
           </section>
-        )}
 
-        <section className="space-y-3">
-          <SectionLabel>Proposed stack</SectionLabel>
-          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-            <StackSelect label="Language" value={stack.language} onChange={(v) => setStack({ language: v })} options={LANGUAGES.map((l) => ({ value: l.id, label: l.name, mvp: l.mvp }))} />
-            <StackSelect label="Framework" value={stack.framework} onChange={(v) => setStack({ framework: v })} options={frameworks.map((f) => ({ value: f.id, label: f.name, hint: f.note, mvp: f.mvp }))} />
-            <StackSelect label="Database" value={stack.database ?? "PostgreSQL"} onChange={(v) => setStack({ database: v })} options={DATABASES.map((d) => ({ value: d, label: d }))} />
-            <StackSelect label="Session / cache" value={stack.cache ?? "Redis"} onChange={(v) => setStack({ cache: v })} options={CACHES.map((d) => ({ value: d, label: d }))} />
-          </div>
-          <p className="text-xs text-muted-foreground">Defaults inferred from the repository (FastAPI backend, PostgreSQL + Redis in docker-compose). Frameworks update with the language.</p>
-        </section>
-
-        <section className="space-y-3">
-          <SectionLabel>Design decisions</SectionLabel>
-          <div className="divide-y rounded-xl border">
-            {spec.decisions.map((d) => (
-              <div key={d.topic} className="grid grid-cols-[140px_1fr] gap-4 p-3 text-[13px]">
-                <span className="text-muted-foreground">{d.topic}</span>
-                <div>
-                  <div className="font-medium">{d.choice}</div>
-                  <div className="text-muted-foreground">{d.reason}</div>
-                  {d.alternatives.length > 0 && <div className="mt-1 text-xs text-muted-foreground">Alternatives: {d.alternatives.join(", ")}</div>}
+          {!buildable && (
+            <section className={cn("space-y-3 rounded-2xl border p-5", real ? "border-warning/40 bg-warning/[0.04]" : "bg-muted/40")}>
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
+                <div className="space-y-1">
+                  <h2 className="text-[14px] font-medium">Kivo can plan {languageName(lang)} services, but can't build them yet</h2>
+                  <p className="text-[13px] text-muted-foreground">
+                    Everything above is designed for {languageName(lang)} · {frameworkName(lang, spec.implementation.framework)}. Building means writing the code, installing it, running the tests and starting it — Kivo can
+                    only do all of that for {BUILDABLE_LANGUAGES.map((l) => l.name).join(", ")} today, and it won't pretend otherwise.
+                    {!real && " In preview mode you can still walk through a simulated build."}
+                  </p>
                 </div>
               </div>
-            ))}
-          </div>
-        </section>
+              <div className="flex flex-wrap gap-2 pl-7">
+                {BUILDABLE_LANGUAGES.map((l) => (
+                  <Button key={l.id} size="sm" variant={real ? "default" : "outline"} onClick={() => setStack({ language: l.id })}>
+                    Use {l.name} instead
+                  </Button>
+                ))}
+              </div>
+            </section>
+          )}
 
-        <Tabs defaultValue="api">
-          <TabsList variant="line">
-            <TabsTrigger value="api">API</TabsTrigger>
-            <TabsTrigger value="data">Data</TabsTrigger>
-            <TabsTrigger value="ir">Service IR</TabsTrigger>
-          </TabsList>
-          <TabsContent value="api" className="pt-3">
-            <EndpointTable spec={spec} />
-          </TabsContent>
-          <TabsContent value="data" className="pt-3">
-            <Entities spec={spec} />
-          </TabsContent>
-          <TabsContent value="ir" className="pt-3">
-            <CaptureScope source="code">
-              <pre className="overflow-x-auto rounded-xl border bg-muted/30 p-4 font-mono text-[12px] leading-5">{specToYaml(spec)}</pre>
-            </CaptureScope>
-          </TabsContent>
-        </Tabs>
+          {buildable && real && machine?.ok === false && (
+            <section className="flex items-start gap-3 rounded-2xl border border-destructive/30 p-5">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+              <div className="space-y-1">
+                <h2 className="text-[14px] font-medium">This computer is missing a tool Kivo needs</h2>
+                <p className="text-[13px] text-muted-foreground">{machine.message}</p>
+              </div>
+            </section>
+          )}
 
-        <div className="sticky bottom-0 -mx-8 flex flex-wrap items-center gap-2 border-t bg-background/95 px-8 py-4 backdrop-blur">
-          <Button onClick={runBuild} className="gap-1.5">
+          {twin && (
+            <section className="flex items-start gap-3 rounded-2xl bg-muted/40 p-5">
+              <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <p className="text-[13px] text-muted-foreground">
+                You already have a <span className="font-medium text-foreground">{twin.name}</span> service ({languageName(twin.implementation.language)} · {frameworkName(twin.implementation.language, twin.implementation.framework)}). This one is built
+                separately, in <span className="font-mono text-[12px]">services/{spec.id}</span>, so the existing service isn't touched.
+              </p>
+            </section>
+          )}
+
+          {spec.questions && spec.questions.length > 0 && (
+            <section className="space-y-3 rounded-2xl bg-muted/40 p-5">
+              <div className="flex items-center gap-2">
+                <Lightbulb className="size-4 text-warning" />
+                <h2 className="text-[14px] font-medium">A few things Kivo assumed</h2>
+              </div>
+              <ul className="space-y-1.5 pl-6 text-[13px]">
+                {spec.questions.map((q, i) => (
+                  <li key={i} className="list-disc marker:text-muted-foreground">
+                    {typeof q === "string" ? q : JSON.stringify(q)}
+                  </li>
+                ))}
+              </ul>
+              <p className="pl-6 text-xs text-muted-foreground">
+                If any of these are wrong,{" "}
+                <button onClick={editDescription} className="underline underline-offset-2 hover:text-foreground">
+                  edit your description
+                </button>{" "}
+                and mention it.
+              </p>
+            </section>
+          )}
+
+          <section className="rounded-2xl border">
+            <button onClick={() => setDetailsOpen((v) => !v)} aria-expanded={detailsOpen} className="flex w-full items-center gap-3 px-4 py-3.5 text-left">
+              <Wrench className="size-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <div className="text-[14px] font-medium">Technical details</div>
+                <div className="truncate text-xs text-muted-foreground">
+                  {stackLine} · {spec.api.endpoints.length} endpoints · {spec.decisions.length} design decisions
+                </div>
+              </div>
+              <span className="hidden text-xs text-muted-foreground sm:inline">{detailsOpen ? "Hide" : "Review or change"}</span>
+              <ChevronDown className={cn("size-4 text-muted-foreground transition-transform", detailsOpen && "rotate-180")} />
+            </button>
+            {detailsOpen && (
+              <div className="kivo-in space-y-8 border-t p-4 sm:p-5">
+                <div className="space-y-3">
+                  <SectionLabel>Stack</SectionLabel>
+                  <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+                    <StackSelect label="Language" value={stack.language} onChange={(v) => setStack({ language: v })} options={LANGUAGES.map((l) => ({ value: l.id, label: l.name, mvp: l.mvp }))} />
+                    <StackSelect label="Framework" value={stack.framework} onChange={(v) => setStack({ framework: v })} options={frameworks.map((f) => ({ value: f.id, label: f.name, hint: f.note, mvp: f.mvp }))} />
+                    <StackSelect label="Database" value={stack.database ?? "PostgreSQL"} onChange={(v) => setStack({ database: v })} options={DATABASES.map((d) => ({ value: d, label: d }))} />
+                    <StackSelect label="Session / cache" value={stack.cache ?? "Redis"} onChange={(v) => setStack({ cache: v })} options={CACHES.map((d) => ({ value: d, label: d }))} />
+                  </div>
+                  <p className="text-xs text-muted-foreground">Matched to what's already in this project, so the new service fits in.</p>
+                </div>
+
+                <div className="space-y-3">
+                  <SectionLabel>Why it's built this way</SectionLabel>
+                  <div className="divide-y rounded-xl border">
+                    {spec.decisions.map((d) => (
+                      <div key={d.topic} className="grid gap-1 p-3 text-[13px] sm:grid-cols-[140px_1fr] sm:gap-4">
+                        <span className="text-muted-foreground">{d.topic}</span>
+                        <div>
+                          <div className="font-medium">{d.choice}</div>
+                          <div className="text-muted-foreground">{d.reason}</div>
+                          {d.alternatives.length > 0 && <div className="mt-1 text-xs text-muted-foreground">Also considered: {d.alternatives.join(", ")}</div>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <Tabs defaultValue="api">
+                  <TabsList variant="line">
+                    <TabsTrigger value="api">API</TabsTrigger>
+                    <TabsTrigger value="data">Data</TabsTrigger>
+                    <TabsTrigger value="ir">Spec (YAML)</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="api" className="pt-3">
+                    <EndpointTable spec={spec} />
+                  </TabsContent>
+                  <TabsContent value="data" className="pt-3">
+                    <Entities spec={spec} />
+                  </TabsContent>
+                  <TabsContent value="ir" className="pt-3">
+                    <CaptureScope source="code">
+                      <pre className="overflow-x-auto rounded-xl border bg-muted/30 p-4 font-mono text-[12px] leading-5">{specToYaml(spec)}</pre>
+                    </CaptureScope>
+                  </TabsContent>
+                </Tabs>
+              </div>
+            )}
+          </section>
+        </div>
+      </ScrollArea>
+
+      <div className="border-t bg-background">
+        <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-2 px-6 py-3.5 sm:px-8">
+          <Button onClick={runBuild} disabled={blocked} className="gap-1.5">
             <Sparkles /> Build {spec.name}
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => {
-              useUi.getState().setPrefill(spec.intent)
-              discardDraft()
-              focusWhenReady("intent-input")
-            }}
-          >
-            <PencilLine /> Refine description
+          <Button variant="outline" onClick={editDescription}>
+            <PencilLine /> Edit description
           </Button>
           <Button
             variant="ghost"
+            className="text-muted-foreground"
             onClick={() => {
               discardDraft()
-              toast("Draft discarded", { action: { label: "Undo", onClick: () => useKivo.getState().setDraft(spec) } })
+              toast("Plan discarded", { action: { label: "Undo", onClick: () => useKivo.getState().setDraft(spec) } })
             }}
           >
             Discard
           </Button>
-          <span className="ml-auto text-xs text-muted-foreground">
-            {spec.requirements.length} requirements · {spec.api.endpoints.length} endpoints · {ai?.ai ? "real build: codegen → pip → pytest → boot" : "offline simulation"}
+          <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Clock className="size-3.5" />
+            {blocked ? `Can't build ${languageName(lang)} here yet` : real ? "Takes about 1–4 minutes · you can watch every step" : "Preview mode · a simulated build, about 10 seconds"}
           </span>
         </div>
       </div>
-    </ScrollArea>
+    </div>
+  )
+}
+
+function YouSaid({ text, onEdit }: { text: string; onEdit?: () => void }) {
+  return (
+    <div className="group flex items-start gap-3 rounded-xl bg-muted/40 px-4 py-3">
+      <Quote className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] text-muted-foreground">You asked for</div>
+        <p className="text-[14px] leading-relaxed">{text}</p>
+      </div>
+      {onEdit && (
+        <button onClick={onEdit} className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+          Edit
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -689,10 +896,12 @@ function TestsTab({ spec }: { spec: ServiceSpec }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <span className="text-[13px] text-muted-foreground">One test per requirement, run by pytest.</span>
-        <Button size="sm" variant="outline" onClick={() => runInTerminal(`cd services/${spec.id} && pytest -q; cd - >/dev/null`)}>
-          <FlaskConical /> Run in terminal
-        </Button>
+        <span className="text-[13px] text-muted-foreground">One test per requirement, run by {toolchainFor(spec.implementation.language).test}.</span>
+        {toolchainFor(spec.implementation.language).testCommand && (
+          <Button size="sm" variant="outline" onClick={() => runInTerminal(`${toolchainFor(spec.implementation.language).testCommand!(spec.id)}; cd - >/dev/null`)}>
+            <FlaskConical /> Run in terminal
+          </Button>
+        )}
       </div>
       {spec.tests.length === 0 ? (
         <p className="text-[13px] text-muted-foreground">No test results yet.</p>

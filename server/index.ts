@@ -2,77 +2,42 @@ import http from "node:http"
 import path from "node:path"
 import * as pty from "node-pty"
 import { WebSocketServer } from "ws"
-import { parseIntent } from "../src/core/intent"
-import type { Decision, Endpoint, ServiceSpec, StackChoice } from "../src/core/types"
-import { bus } from "./bus"
+import type { ServiceSpec } from "../src/core/types"
 import { aiAvailable, checkAll, currentModel, describe, parseJsonLoose, setActive, stream, type Msg } from "./ai"
-import { cleanEnv, runBuild, serviceUrl, type BuildEvent } from "./pipeline"
+import { bus } from "./bus"
+import { HttpError, json, readJson, requireObject, requireString, sse } from "./http"
+import { cleanEnv, isBuilding, runBuild, serviceUrl, stopAll, type BuildEvent } from "./pipeline"
 import { chatSystem, EDIT_SYSTEM, editUser, INTENT_SYSTEM, intentUser } from "./prompts"
+import { normalizeSpec, parseServices, projectContext, resolveStack, sanitizeStack, validateBuildSpec } from "./spec"
+import { allToolchains } from "./toolchains"
 import { analyze, ensureWorkspace, git, listFiles, PROJECT, PROJECT_DIR, readFile, VENV, writeFile } from "./workspace"
 
 /**
  * Kivo daemon — local only. Binds to 127.0.0.1 and rejects requests from any origin
  * other than the Kivo UI, so a web page can't reach the terminal or the filesystem.
+ *
+ * Robustness rules: every input is validated (4xx, never a crash), every child process and
+ * outbound request has an error path and a timeout, and shutdown stops what Kivo started.
  */
 
 const PORT = Number(process.env.KIVO_DAEMON_PORT ?? 5175)
 const ALLOWED = new Set(["http://localhost:5174", "http://127.0.0.1:5174", "http://localhost:4173", "http://127.0.0.1:4173"])
+const PROXY_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
+
+// A bug in one request must never take down the terminal, running services and other builds with it.
+process.on("unhandledRejection", (err) => console.error("[kivo] unhandled rejection:", err))
+process.on("uncaughtException", (err) => console.error("[kivo] uncaught exception:", err))
 
 await ensureWorkspace()
 await checkAll()
 
 const originOk = (req: http.IncomingMessage) => !req.headers.origin || ALLOWED.has(req.headers.origin)
 
-async function body<T>(req: http.IncomingMessage): Promise<T> {
-  const chunks: Buffer[] = []
-  for await (const c of req) chunks.push(c as Buffer)
-  return JSON.parse(Buffer.concat(chunks).toString() || "{}") as T
-}
-
-function json(res: http.ServerResponse, status: number, data: unknown) {
-  res.writeHead(status, { "Content-Type": "application/json" })
-  res.end(JSON.stringify(data))
-}
-
-function sse(res: http.ServerResponse) {
-  res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" })
-  return (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`)
-}
-
-const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")
-
-/** Model output is untrusted: coerce anything into a display string. */
-const str = (v: unknown): string =>
-  typeof v === "string" ? v : v && typeof v === "object" ? str((v as Record<string, unknown>).text ?? (v as Record<string, unknown>).question ?? (v as Record<string, unknown>).name ?? (v as Record<string, unknown>).title ?? JSON.stringify(v)) : v == null ? "" : String(v)
-const strs = (v: unknown) => (Array.isArray(v) ? v.map(str).filter(Boolean) : [])
-
-/** Merge the model's JSON into a complete ServiceSpec, using the deterministic parse as defaults. */
-function normalizeSpec(ai: Record<string, unknown>, text: string, stack: StackChoice): ServiceSpec {
-  const base = parseIntent(text, stack)
-  const name = str(ai.name).trim() ? str(ai.name).trim().replace(/\s+service$/i, "") : base.name
-  const reqs = Array.isArray(ai.requirements) && ai.requirements.length ? (ai.requirements as Record<string, unknown>[]).map((r) => ({ id: slug(str(r.id ?? r.title)).replace(/-/g, "_"), title: str(r.title ?? r.id), description: str(r.description) })) : base.requirements
-  const endpoints = Array.isArray(ai.endpoints) && ai.endpoints.length ? (ai.endpoints as Record<string, unknown>[]).map((e) => ({ method: str(e.method).toUpperCase() as Endpoint["method"], path: str(e.path), summary: str(e.summary), requirement: str(e.requirement), auth: Boolean(e.auth) })) : base.api.endpoints
-  const entities = Array.isArray(ai.entities) && ai.entities.length
-    ? (ai.entities as Record<string, unknown>[]).map((e) => ({ name: str(e.name), fields: (Array.isArray(e.fields) ? e.fields : []).map((f: Record<string, unknown>) => ({ name: str(f.name), type: str(f.type), note: f.note ? str(f.note) : undefined })) }))
-    : base.entities
-  const aiDecisions: Decision[] = Array.isArray(ai.decisions) ? (ai.decisions as Record<string, unknown>[]).map((d) => ({ topic: str(d.topic), choice: str(d.choice), reason: str(d.reason), alternatives: strs(d.alternatives) })) : []
-  const usesCache = ai.uses_cache === true && stack.cache && stack.cache !== "None"
-  const auth = ai.authentication && typeof ai.authentication === "object" ? { strategy: str((ai.authentication as Record<string, unknown>).strategy), reason: str((ai.authentication as Record<string, unknown>).reason) } : undefined
-  return {
-    ...base,
-    id: slug(name),
-    name,
-    purpose: str(ai.purpose) || base.purpose,
-    requirements: reqs,
-    entities,
-    api: { style: "rest", endpoints },
-    authentication: auth,
-    cache: usesCache ? { type: stack.cache!, reason: "sessions, rate limits, hot reads" } : undefined,
-    implementation: { ...stack, cache: usesCache ? stack.cache : undefined },
-    dependsOn: Array.isArray(ai.depends_on) ? strs(ai.depends_on).map((d) => slug(d)) : base.dependsOn,
-    decisions: [...base.decisions.filter((d) => d.topic === "Language & framework" || d.topic === "Storage" || (d.topic === "Cache" && usesCache)), ...aiDecisions.filter((d) => !["Language & framework", "Storage", "Cache"].includes(d.topic))],
-    questions: strs(ai.questions),
-  } as ServiceSpec
+/** Editor language note for inline edits, from the file being edited rather than a fixed assumption. */
+function editNote(file: string) {
+  const ext = path.extname(file).slice(1)
+  const lang = { py: "Python 3.9 (typing.Optional, no X | Y unions)", ts: "TypeScript", tsx: "TypeScript + React", js: "JavaScript", java: "Java", kt: "Kotlin", go: "Go", rs: "Rust", sql: "SQL" }[ext]
+  return `Project: ${PROJECT}. ${lang ? `This file is ${lang}.` : ""}`.trim()
 }
 
 const server = http.createServer(async (req, res) => {
@@ -80,24 +45,29 @@ const server = http.createServer(async (req, res) => {
   if (!originOk(req)) return json(res, 403, { error: "origin not allowed" })
 
   try {
-    if (url.pathname === "/api/health") return json(res, 200, { ...describe(), ai: aiAvailable(), model: currentModel(), project: PROJECT })
+    if (url.pathname === "/api/health") return json(res, 200, { ...describe(), ai: aiAvailable(), model: currentModel(), project: PROJECT, toolchains: await allToolchains() })
 
     if (url.pathname === "/api/providers" && req.method === "GET") return json(res, 200, await checkAll())
 
     if (url.pathname === "/api/providers/active" && req.method === "POST") {
-      const b = await body<{ id: string }>(req)
-      return json(res, 200, setActive(b.id))
+      const b = await readJson(req)
+      return json(res, 200, setActive(requireString(b.id, "id", 40)))
     }
 
     if (url.pathname === "/api/project") return json(res, 200, analyze())
 
     if (url.pathname === "/api/fs/tree") return json(res, 200, { files: listFiles() })
 
-    if (url.pathname === "/api/fs/read") return json(res, 200, { path: url.searchParams.get("path"), content: readFile(url.searchParams.get("path") ?? "") })
+    if (url.pathname === "/api/fs/read") {
+      const file = requireString(url.searchParams.get("path"), "path", 1024)
+      return json(res, 200, { path: file, content: readFile(file) })
+    }
 
     if (url.pathname === "/api/fs/write" && req.method === "PUT") {
-      const b = await body<{ path: string; content: string }>(req)
-      writeFile(b.path, b.content)
+      const b = await readJson(req)
+      const file = requireString(b.path, "path", 1024)
+      if (typeof b.content !== "string") throw new HttpError(400, '"content" must be a string')
+      writeFile(file, b.content)
       return json(res, 200, { ok: true })
     }
 
@@ -108,25 +78,37 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/api/proxy" && req.method === "POST") {
       // In-app API client. Only reaches services Kivo itself launched on 127.0.0.1 — never arbitrary URLs.
-      const b = await body<{ service: string; method: string; path: string; headers?: Record<string, string>; body?: string }>(req)
-      const base = serviceUrl(b.service)
-      if (!base) return json(res, 404, { error: `${b.service} is not running` })
-      if (!b.path.startsWith("/") || b.path.startsWith("//")) return json(res, 400, { error: "path must start with /" })
+      const b = await readJson(req)
+      const service = requireString(b.service, "service", 64)
+      const method = requireString(b.method, "method", 10).toUpperCase()
+      const target = requireString(b.path, "path", 2048)
+      if (!PROXY_METHODS.has(method)) throw new HttpError(400, `Unsupported method ${method}`)
+      if (!target.startsWith("/") || target.startsWith("//")) throw new HttpError(400, "path must start with /")
+      const base = serviceUrl(service)
+      if (!base) return json(res, 404, { error: `${service} is not running` })
+      const headers: Record<string, string> = { "Content-Type": "application/json" }
+      if (b.headers && typeof b.headers === "object") for (const [k, v] of Object.entries(b.headers)) if (typeof v === "string") headers[k] = v
       const started = performance.now()
-      const r = await fetch(base + b.path, {
-        method: b.method,
-        headers: { "Content-Type": "application/json", ...(b.headers ?? {}) },
-        body: ["GET", "HEAD"].includes(b.method.toUpperCase()) ? undefined : b.body,
-      })
-      const text = await r.text()
-      return json(res, 200, { status: r.status, statusText: r.statusText, ms: Math.round(performance.now() - started), headers: Object.fromEntries(r.headers), body: text })
+      try {
+        const r = await fetch(base + target, {
+          method,
+          headers,
+          body: ["GET", "HEAD"].includes(method) || typeof b.body !== "string" ? undefined : b.body,
+          signal: AbortSignal.timeout(30_000),
+        })
+        const text = (await r.text()).slice(0, 2_000_000)
+        return json(res, 200, { status: r.status, statusText: r.statusText, ms: Math.round(performance.now() - started), headers: Object.fromEntries(r.headers), body: text })
+      } catch (err) {
+        const timedOut = (err as Error).name === "TimeoutError"
+        return json(res, 502, { error: timedOut ? `${service} didn't respond within 30s` : `Couldn't reach ${service}: ${(err as Error).message}` })
+      }
     }
 
     if (url.pathname === "/api/events") {
       const send = sse(res)
       const on = (e: unknown) => send(e)
       bus.on("event", on)
-      const ping = setInterval(() => res.write(": ping\n\n"), 15000)
+      const ping = setInterval(() => !res.writableEnded && res.write(": ping\n\n"), 15000)
       req.on("close", () => {
         bus.off("event", on)
         clearInterval(ping)
@@ -134,53 +116,68 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
-    if (!aiAvailable() && url.pathname.startsWith("/api/ai")) return json(res, 503, { error: "No AI provider is available — configure one in .env (see .env.example)" })
+    if (url.pathname.startsWith("/api/ai") && !aiAvailable()) return json(res, 503, { error: "No AI provider is available — configure one in .env (see .env.example)" })
 
     if (url.pathname === "/api/ai/intent" && req.method === "POST") {
-      const b = await body<{ text: string; stack: StackChoice }>(req)
+      const b = await readJson(req)
+      const text = requireString(b.text, "text", 4000)
+      // A language named in the request ("…in Java") wins over the picker — and the UI is told which one was used.
+      const stack = resolveStack(text, sanitizeStack(b.stack))
+      const ac = new AbortController()
+      res.on("close", () => ac.abort())
       const send = sse(res)
-      const a = analyze()
-      const project = `Detected: ${a.detections.map((d) => `${d.tech} (${d.category})`).join(", ")}.\nExisting services: User Management (/users), Notifications (/notify).\nLanguages: ${a.languages.map((l) => `${l.name} ${l.share}%`).join(", ")}.`
       const content = await stream(
         [
           { role: "system", content: INTENT_SYSTEM },
-          { role: "user", content: intentUser(b.text, b.stack, project) },
+          { role: "user", content: intentUser(text, stack, projectContext(analyze(), parseServices(b.services))) },
         ],
         (d) => send({ t: "delta", ...d }),
-        { json: true, effort: "medium", onRateLimit: (r) => send({ t: "wait", ...r }) },
+        { json: true, effort: "medium", signal: ac.signal, onRateLimit: (r) => send({ t: "wait", ...r }) },
       )
-      send({ t: "result", spec: normalizeSpec(parseJsonLoose(content), b.text, b.stack) })
+      send({ t: "result", spec: normalizeSpec(parseJsonLoose(content), text, stack) })
       return res.end()
     }
 
     if (url.pathname === "/api/ai/chat" && req.method === "POST") {
-      const b = await body<{ messages: Msg[]; context: string; level: string }>(req)
-      const send = sse(res)
+      const b = await readJson(req)
+      if (!Array.isArray(b.messages)) throw new HttpError(400, '"messages" must be an array')
+      const messages = (b.messages as Msg[]).filter((m) => (m?.role === "user" || m?.role === "assistant") && typeof m.content === "string").slice(-12)
       const ac = new AbortController()
-      req.on("close", () => ac.abort())
-      await stream([{ role: "system", content: chatSystem(b.level, b.context) }, ...b.messages.slice(-12)], (d) => send({ t: "delta", ...d }), { effort: "low", maxTokens: 2048, signal: ac.signal, onRateLimit: (r) => send({ t: "wait", ...r }) })
+      res.on("close", () => ac.abort())
+      const send = sse(res)
+      await stream([{ role: "system", content: chatSystem(String(b.level ?? "intermediate"), String(b.context ?? "").slice(0, 40_000)) }, ...messages], (d) => send({ t: "delta", ...d }), {
+        effort: "low",
+        maxTokens: 2048,
+        signal: ac.signal,
+        onRateLimit: (r) => send({ t: "wait", ...r }),
+      })
       send({ t: "done" })
       return res.end()
     }
 
     if (url.pathname === "/api/ai/edit" && req.method === "POST") {
-      const b = await body<{ path: string; content: string; from: number; to: number; instruction: string; previous?: string }>(req)
-      const send = sse(res)
+      const b = await readJson(req)
+      const file = requireString(b.path, "path", 1024)
+      const content = typeof b.content === "string" ? b.content : ""
+      const from = Math.max(0, Math.min(Number(b.from) || 0, content.length))
+      const to = Math.max(from, Math.min(Number(b.to) || 0, content.length))
+      const instruction = requireString(b.instruction, "instruction", 4000)
       const ac = new AbortController()
       res.on("close", () => ac.abort())
+      const send = sse(res)
       await stream(
         [
           { role: "system", content: EDIT_SYSTEM },
           {
             role: "user",
             content: editUser({
-              path: b.path,
-              before: b.content.slice(0, b.from),
-              region: b.content.slice(b.from, b.to),
-              after: b.content.slice(b.to),
-              instruction: b.instruction,
-              previous: b.previous,
-              projectNote: "Project: tandem (React Native + FastAPI). Python services target Python 3.9 (typing.Optional, no X | Y unions).",
+              path: file,
+              before: content.slice(0, from),
+              region: content.slice(from, to),
+              after: content.slice(to),
+              instruction,
+              previous: typeof b.previous === "string" ? b.previous : undefined,
+              projectNote: editNote(file),
             }),
           },
         ],
@@ -192,26 +189,39 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/build" && req.method === "POST") {
-      const { spec } = await body<{ spec: ServiceSpec }>(req)
-      const send = sse(res)
+      const b = await readJson(req)
+      const spec: ServiceSpec = validateBuildSpec(requireObject(b.spec, "spec"))
+      if (isBuilding(spec.id)) throw new HttpError(409, `${spec.name} is already being built`)
       const ac = new AbortController()
       res.on("close", () => ac.abort())
+      const send = sse(res)
       await runBuild(spec, (e: BuildEvent) => send(e), ac.signal).catch((err) => send({ t: "error", message: String(err?.message ?? err) }))
       return res.end()
     }
 
     json(res, 404, { error: "not found" })
   } catch (err) {
+    const e = err as Error & { code?: string }
+    const status = err instanceof HttpError ? err.status : e.code === "ENOENT" ? 404 : e.message === "Path outside workspace" ? 403 : e.name === "AbortError" ? 499 : 500
+    const message = e.code === "ENOENT" ? "File not found" : e.message
+    if (status >= 500) console.error(`[kivo] ${req.method} ${url.pathname} failed:`, err)
     if (res.headersSent) {
-      res.write(`data: ${JSON.stringify({ t: "error", message: String((err as Error).message) })}\n\n`)
-      res.end()
-    } else json(res, 500, { error: String((err as Error).message) })
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ t: "error", message })}\n\n`)
+        res.end()
+      }
+    } else json(res, status, { error: message })
   }
+})
+
+server.on("clientError", (_err, socket) => {
+  if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\n\r\n")
 })
 
 // ─── Terminal: a real shell in the project workspace ─────────────────────────
 
-const wss = new WebSocketServer({ noServer: true })
+const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 })
+const terminals = new Set<pty.IPty>()
 
 server.on("upgrade", (req, socket, head) => {
   if (!req.url?.startsWith("/ws/terminal") || !originOk(req) || !req.headers.origin) {
@@ -224,22 +234,69 @@ server.on("upgrade", (req, socket, head) => {
     env.PATH = `${path.join(VENV, "bin")}:${env.PATH}`
     env.TERM = "xterm-256color"
     env.KIVO = "1"
-    const shell = pty.spawn(process.env.SHELL || "/bin/zsh", ["-l"], { name: "xterm-256color", cols: 100, rows: 24, cwd: PROJECT_DIR, env: env as Record<string, string> })
+    let shell: pty.IPty
+    try {
+      shell = pty.spawn(process.env.SHELL || "/bin/zsh", ["-l"], { name: "xterm-256color", cols: 100, rows: 24, cwd: PROJECT_DIR, env: env as Record<string, string> })
+    } catch (err) {
+      ws.send(`\r\nKivo couldn't start a shell: ${(err as Error).message}\r\n`)
+      ws.close()
+      return
+    }
+    terminals.add(shell)
     shell.onData((d) => ws.readyState === ws.OPEN && ws.send(d))
-    shell.onExit(() => ws.close())
+    shell.onExit(() => {
+      terminals.delete(shell)
+      if (ws.readyState === ws.OPEN) ws.close()
+    })
     ws.on("message", (raw) => {
       const msg = raw.toString()
-      if (msg.startsWith("\u0000resize:")) {
-        const [cols, rows] = msg.slice(8).split("x").map(Number)
-        if (cols > 0 && rows > 0) shell.resize(cols, rows)
-      } else shell.write(msg)
+      try {
+        if (msg.startsWith("\u0000resize:")) {
+          const [cols, rows] = msg.slice(8).split("x").map(Number)
+          if (cols > 0 && rows > 0 && cols < 1000 && rows < 1000) shell.resize(cols, rows)
+        } else shell.write(msg)
+      } catch {
+        // the shell already exited; the close handler cleans up
+      }
     })
-    ws.on("close", () => shell.kill())
+    ws.on("error", () => ws.terminate())
+    ws.on("close", () => {
+      terminals.delete(shell)
+      try {
+        shell.kill()
+      } catch {
+        // already gone
+      }
+    })
   })
+})
+
+server.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") console.error(`[kivo] port ${PORT} is already in use — is another Kivo daemon running? Set KIVO_DAEMON_PORT to use a different port.`)
+  else console.error("[kivo] server error:", err)
+  process.exit(1)
 })
 
 server.listen(PORT, "127.0.0.1", () => {
   const d = describe()
   console.log(`kivo daemon  http://127.0.0.1:${PORT}  workspace ${PROJECT_DIR}  active=${d.active}`)
   for (const p of d.providers) console.log(`  ${p.id.padEnd(7)} ${p.status.padEnd(13)} ${p.message ?? p.models.join(", ")}`)
+  allToolchains().then((t) => Object.values(t).forEach((s) => console.log(`  ${s.language.padEnd(7)} ${s.ok ? `ok            ${s.version ?? ""}` : `missing       ${s.message}`}`)))
 })
+
+/** Graceful shutdown: stop running services and shells so nothing is left holding ports. */
+function shutdown(signal: string) {
+  console.log(`[kivo] ${signal} — stopping services and shells`)
+  stopAll()
+  for (const t of terminals) {
+    try {
+      t.kill()
+    } catch {
+      // already gone
+    }
+  }
+  server.close()
+  setTimeout(() => process.exit(0), 500).unref()
+}
+process.on("SIGINT", () => shutdown("SIGINT"))
+process.on("SIGTERM", () => shutdown("SIGTERM"))

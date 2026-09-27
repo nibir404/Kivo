@@ -131,6 +131,23 @@ The Intent Agent emits the IR under a strict JSON schema, grounded in the System
 
 **Validation rule:** a service is only marked `running` after deterministic steps pass (install → tests against real containers → boot → `/health` → telemetry attached). Test failures are fed back to the Implementation Agent with exact output, up to N repair attempts, then surfaced to the user honestly.
 
+### Toolchains
+
+A **toolchain** is what it takes to turn a language's source into a verified running service: install, lint, test, boot. The pipeline is only allowed to report success through a toolchain it can actually run.
+
+| Layer | File | Responsibility |
+|---|---|---|
+| Facts (shared) | `src/core/stacks.ts` → `TOOLCHAINS` | Extension, installer, test runner, runtime, and `buildable` per language. The planner and UI read this; nothing assumes "not Python ⇒ TypeScript". |
+| Detection (shared) | `src/core/stacks.ts` → `detectStack` | Deterministic: a language/framework named in the request beats the picker. |
+| Preflight (daemon) | `server/toolchains.ts` | Probes the machine (e.g. `python3 --version`, ≥ 3.9), cached 60 s, exposed on `/api/health`. A build that can't finish is refused **before any AI call**. |
+| Execution (daemon) | `server/pipeline.ts` | The step implementations. Python: pip → pyflakes → pytest (+ repair) → uvicorn `/health`. |
+
+Only Python is `buildable` today. Other languages are planned and reviewed normally; the review screen explains the limit and offers a buildable language. Adding one = a `TOOLCHAINS` entry with `buildable: true`, a preflight check, and install/test/boot steps in the pipeline.
+
+### Daemon boundary
+
+Everything entering the daemon is untrusted and validated in `server/spec.ts` / `server/http.ts`: JSON bodies are size-limited and parsed with 4xx errors, service ids are slugs (`services/<id>` can't escape), stacks are reduced to known languages, and the Intent Agent is grounded in the *actual* service list sent by the UI — never hard-coded names. New services that share a name with a detected service get their own id and directory instead of replacing it.
+
 ### Agents
 
 | Agent | Input | Output |

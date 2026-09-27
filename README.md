@@ -18,6 +18,23 @@ npm run dev            # starts the Kivo daemon (127.0.0.1:5175) and the UI (loc
 
 Without a key, or without the daemon, Kivo still runs in offline mode with simulated builds (clearly labelled).
 
+```bash
+npm test          # unit tests: language detection, planner, spec validation, pipeline preflight
+npm run typecheck # UI + daemon
+npm run check     # typecheck + lint + tests
+```
+
+## Languages
+
+Name a language in your description ("…using Java", "in Spring Boot") and Kivo uses it; otherwise it uses the stack picker, which defaults to the project's own backend (Python · FastAPI).
+
+| | Plan & review | Build · test · run |
+|---|---|---|
+| Python (FastAPI) | ✓ | ✓ — the verified pipeline below |
+| Java, Kotlin, TypeScript, Go, Rust, Swift, Dart, C++ | ✓ | Not yet. The review screen says so and offers Python; the daemon refuses the build before any AI call rather than faking one. |
+
+Adding a language means adding a toolchain (`src/core/stacks.ts` → `TOOLCHAINS`, `server/toolchains.ts` preflight, pipeline steps). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#toolchains).
+
 ## What's real
 
 | | How it works |
@@ -56,6 +73,15 @@ Free Groq keys allow ~8K tokens per minute per model. Kivo fails over between `g
 - File access is confined to the workspace directory.
 - The API key lives only in `.env` (git-ignored). It's never sent to the browser and it's stripped from the environment of the shell and every child process.
 - Model output is treated as untrusted: JSON is coerced into typed structures, and Markdown renders without raw HTML.
+- Every request is validated: malformed or oversized bodies get a 4xx, service ids must be slugs (a build can never write or delete outside `services/<id>`).
+
+## Stability
+
+- A failing request, a missing tool (e.g. no `python3`) or a crashed child process is reported, never fatal to the daemon.
+- Outbound calls have timeouts (AI streams, the API client proxy, health checks); SSE streams abort when the browser disconnects.
+- One build per service at a time (a second one gets HTTP 409).
+- On shutdown (Ctrl-C, or a `tsx watch` reload) the daemon stops every service and shell it started, so nothing is left holding a port.
+- If the daemon goes away mid-build, the UI marks the build as stopped instead of leaving it "building" forever.
 
 ## Try this
 

@@ -9,7 +9,8 @@ import { SECRET_ENV, stream } from "./ai"
 import { CODEGEN_SYSTEM, codegenUser, REPAIR_SYSTEM, repairUser } from "./prompts"
 import { bus } from "./bus"
 import { PY_SCAFFOLD } from "./scaffold"
-import { git, PROJECT_DIR, VENV, writeFile } from "./workspace"
+import { toolchainStatus } from "./toolchains"
+import { git, PROJECT_DIR, VENV, WORKSPACES, writeFile } from "./workspace"
 
 /**
  * The build pipeline. AI steps write real files; deterministic steps run real tools.
@@ -28,7 +29,20 @@ export type BuildEvent =
 
 const running = new Map<string, ChildProcess>()
 const urls = new Map<string, string>()
-process.on("exit", () => running.forEach((p) => p.kill()))
+/** Services with a build in progress — a second build of the same service is refused, not interleaved. */
+const building = new Set<string>()
+
+/** Stop every service process Kivo started. Called on daemon shutdown so no orphans hold ports. */
+export function stopAll() {
+  for (const p of running.values()) if (p.exitCode === null) p.kill()
+  running.clear()
+}
+process.on("exit", stopAll)
+
+export const isBuilding = (id: string) => building.has(id)
+
+/** Cap captured tool output so a chatty process can't exhaust memory. */
+const MAX_OUTPUT = 1_000_000
 
 /** Base URL of a service Kivo launched — the only targets the in-app API client may reach. */
 export function serviceUrl(id: string) {
@@ -37,6 +51,25 @@ export function serviceUrl(id: string) {
 }
 
 export async function runBuild(spec: ServiceSpec, emit: (e: BuildEvent) => void, signal: AbortSignal) {
+  if (building.has(spec.id)) {
+    emit({ t: "error", message: `${spec.name} is already being built — wait for that build to finish.` })
+    return
+  }
+  // Preflight: never spend AI calls on a build this machine can't finish.
+  const toolchain = await toolchainStatus(spec.implementation.language, true)
+  if (!toolchain.ok) {
+    emit({ t: "error", message: toolchain.message ?? "This language can't be built here." })
+    return
+  }
+  building.add(spec.id)
+  try {
+    await build(spec, emit, signal)
+  } finally {
+    building.delete(spec.id)
+  }
+}
+
+async function build(spec: ServiceSpec, emit: (e: BuildEvent) => void, signal: AbortSignal) {
   const steps = planFor(spec)
   const serviceRel = `services/${spec.id}`
   const serviceDir = path.join(PROJECT_DIR, serviceRel)
@@ -64,7 +97,10 @@ export async function runBuild(spec: ServiceSpec, emit: (e: BuildEvent) => void,
   fs.rmSync(serviceDir, { recursive: true, force: true })
 
   for (const step of steps) {
-    if (signal.aborted) return
+    if (signal.aborted) {
+      running.get(spec.id)?.kill()
+      return
+    }
     if (blocked) {
       emit({ t: "step", id: step.id, status: "skipped", note: "Skipped — an earlier step failed." })
       continue
@@ -109,15 +145,16 @@ export async function runBuild(spec: ServiceSpec, emit: (e: BuildEvent) => void,
         save(step.id, ".env.example", `# Local runs default to SQLite. Point at ${spec.storage.type} for production:\nDATABASE_URL=postgresql://tandem:tandem@localhost/tandem\n${spec.cache ? "REDIS_URL=redis://localhost:6379/0\n" : ""}JWT_SECRET=change-me\n`)
         return "DATABASE_URL wired; SQLite by default so it runs without containers."
       }
+      // Preflight guarantees a buildable toolchain; this guard keeps the pipeline honest if that ever changes.
       case "install":
-        if (!py) return `Skipped — dependency installation for ${spec.implementation.language} is not in the MVP yet.`
+        if (!py) throw new Error(`No install step for ${spec.implementation.language}`)
         return install(step.id)
       case "tests":
         await generate(step)
-        if (!py) return `Skipped — running ${spec.implementation.language} tests is not in the MVP yet.`
+        if (!py) throw new Error(`No test runner for ${spec.implementation.language}`)
         return test(step.id)
       case "boot":
-        if (!py) return `Skipped — booting ${spec.implementation.language} services is not in the MVP yet.`
+        if (!py) throw new Error(`No runtime for ${spec.implementation.language}`)
         return boot(step.id)
       default:
         if (step.executor === "ai") {
@@ -300,6 +337,8 @@ export async function runBuild(spec: ServiceSpec, emit: (e: BuildEvent) => void,
       cwd: serviceDir,
       env: cleanEnv(),
     })
+    let spawnError: Error | undefined
+    proc.on("error", (err) => (spawnError = err))
     running.set(spec.id, proc)
     urls.set(spec.id, `http://127.0.0.1:${port}`)
     const forward = (b: Buffer) =>
@@ -312,11 +351,16 @@ export async function runBuild(spec: ServiceSpec, emit: (e: BuildEvent) => void,
     proc.stderr.on("data", forward)
     const url = `http://127.0.0.1:${port}`
     for (let i = 0; i < 60; i++) {
+      if (spawnError) throw new Error(`Couldn't start the service: ${spawnError.message}`)
       if (proc.exitCode !== null) throw new Error("Service process exited during startup — see Logs")
+      if (signal.aborted) {
+        proc.kill()
+        throw new Error("Build cancelled")
+      }
       try {
-        const res = await fetch(`${url}/health`)
+        const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) })
         if (res.ok) {
-          const openapi = (await fetch(`${url}/openapi.json`).then((r) => r.json()).catch(() => ({ paths: {} }))) as { paths?: Record<string, object> }
+          const openapi = (await fetch(`${url}/openapi.json`, { signal: AbortSignal.timeout(5000) }).then((r) => r.json()).catch(() => ({ paths: {} }))) as { paths?: Record<string, object> }
           const routes = Object.entries(openapi.paths ?? {}).flatMap(([p, ms]) => Object.keys(ms as object).map((m) => `${m.toUpperCase()} ${p}`))
           log(id, `✓ healthy at ${url} — ${routes.length} routes live`)
           emit({ t: "url", url, routes })
@@ -334,23 +378,35 @@ export async function runBuild(spec: ServiceSpec, emit: (e: BuildEvent) => void,
   }
 
   function sh(id: string, cmd: string, args: string[], cwd: string, timeout = 300_000, quiet = false) {
-    log(id, `$ ${path.basename(cmd)} ${args.map((a) => (a.includes(" ") ? `"${a}"` : a.replace(PROJECT_DIR, "."))).join(" ")}`)
+    const shown = (a: string) => a.replace(PROJECT_DIR, ".").replace(WORKSPACES, "~kivo")
+    log(id, `$ ${path.basename(cmd)} ${args.map((a) => (a.includes(" ") ? `"${shown(a)}"` : shown(a))).join(" ")}`)
     return new Promise<{ code: number; output: string }>((resolve) => {
       const p = spawn(cmd, args, { cwd, env: cleanEnv() })
       let output = ""
       const timer = setTimeout(() => p.kill(), timeout)
       const onData = (b: Buffer) => {
         const s = stripAnsi(b.toString())
-        output += s
+        output = (output + s).slice(-MAX_OUTPUT)
         if (!quiet) s.split("\n").filter((l) => l.trim()).forEach((l) => log(id, l))
       }
       p.stdout.on("data", onData)
       p.stderr.on("data", onData)
-      signal.addEventListener("abort", () => p.kill(), { once: true })
-      p.on("close", (code) => {
+      const abort = () => p.kill()
+      signal.addEventListener("abort", abort, { once: true })
+      let settled = false
+      const finish = (code: number, extra = "") => {
+        if (settled) return
+        settled = true
         clearTimeout(timer)
-        resolve({ code: code ?? 1, output })
+        signal.removeEventListener("abort", abort)
+        resolve({ code, output: output + extra })
+      }
+      // A missing executable emits "error" (not "close") — without this handler it would crash the daemon.
+      p.on("error", (err) => {
+        log(id, `✗ couldn't run ${path.basename(cmd)}: ${err.message}`)
+        finish(127, `\n${err.message}`)
       })
+      p.on("close", (code) => finish(code ?? 1))
     })
   }
 }
