@@ -1,0 +1,7 @@
+[project]
+name = "tandem-backend"
+requires-python = ">=3.9"
+dependencies = ["fastapi", "uvicorn", "sqlalchemy[asyncio]", "asyncpg", "redis", "pydantic>=2"]
+
+[dependency-groups]
+dev = ["pytest", "httpx"]
