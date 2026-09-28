@@ -25,6 +25,7 @@
 | **Kivo Daemon** | Node.js 22 + `tsx watch` + `ws` + `node-pty` | `http://127.0.0.1:5175` | Local API, WebSocket terminal server, build pipeline, git/SCM engine, file system sandbox, AI orchestration |
 | **Kivo UI** | Vite 8 + React 19 + Tailwind v4 + shadcn/ui | `http://localhost:5174` | Desktop web interface, CodeMirror 6 editor, xterm.js terminal, React Flow graphs |
 | **Unified Production** | Daemon single-port serving | `http://localhost:5175` | Daemon serves the production build (`dist/`) directly on port 5175 via `npm start` |
+| **Funchole Cloud Deploy** | Gateway `5zyu0p.funchole.dev` | `https://5zyu0p.funchole.dev/app/` | STATIC Function (`fn_kivo`) routed via Flow `flw_kivo_app` (`/app/*`) on Default Gateway |
 | **Vite Proxy** | Configured in `vite.config.ts` | `/api` and `/ws` → `5175` | Development proxy enabling hot module reloading without cross-origin issues |
 
 ---
