@@ -32,7 +32,7 @@
 
 ## 3. Core Subsystems & Architecture
 
-### A. Intent, Spec & Build Pipeline (`apps/daemon/src/build/pipeline.ts`, `apps/daemon/src/build/spec.ts`, `apps/daemon/src/ai/prompts.ts`)
+### A. Intent, Spec & Build Pipeline (`apps/daemon/src/build/pipeline.ts`, `packages/ai/src/spec.ts`, `packages/ai/src/prompts.ts`)
 - **Intent Analysis**: Streams user requirements through LLM (Groq default `gpt-oss-120b`), generating a structured Service IR (`ServiceSpec`).
 - **Validation & Preflight**: Strict boundary checks (`apps/daemon/src/build/toolchains.ts`). Language toolchains must be validated before file writes or model calls.
 - **Code Generation**: Implementation Agent writes domain code into `.kivo-workspace/tandem/services/<id>/`. Infrastructure files (`db.py`, `outbox.py`, `kv.py`, `conftest.py`) are deterministically templated to prevent hallucinated boilerplates.

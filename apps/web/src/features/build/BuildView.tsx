@@ -22,6 +22,7 @@ import { Journey, useTechnical } from "./journey"
 import { SectionLabel, StatusDot } from "@/shell/bits"
 import { Capturable, CaptureScope, useUi } from "@/shell/capture"
 import { focusWhenReady } from "@/shell/Preferences"
+import { inBrowser } from "@/lib/transport"
 
 export function BuildView() {
   const { draft, activeServiceId, understanding, discipline } = useKivo()
@@ -45,7 +46,7 @@ const EXAMPLES = [
   { icon: Bell, label: "Notifications", text: "Create a notification system." },
 ]
 
-const STATUS_LABEL: Partial<Record<ServiceStatus, string>> = { draft: "Draft", planned: "Planned", building: "Building", ready: "Ready", running: "Running", failed: "Needs attention" }
+const STATUS_LABEL: Partial<Record<ServiceStatus, string>> = { draft: "Draft", planned: "Planned", building: "Building", generated: "Code written", ready: "Ready", running: "Running", failed: "Needs attention" }
 
 function BuildHome() {
   const { analysis, services, openService, build, setMode, select } = useKivo()
@@ -236,7 +237,7 @@ function IntentComposer() {
             <Kbd>↵</Kbd> to continue · <Kbd>⇧↵</Kbd> new line
           </span>
           {!ai?.ai && (
-            <span title="No AI provider is connected, so builds are simulated. Add a key in .env to generate real code." className="rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground">
+            <span title={inBrowser ? "No AI yet, so builds are simulated. Add your Groq key in Preferences to generate real code." : "No AI provider is connected, so builds are simulated. Add a key in .env to generate real code."} className="rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground">
               Preview mode
             </span>
           )}
@@ -588,7 +589,15 @@ function IntentReview({ spec }: { spec: ServiceSpec }) {
           </Button>
           <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
             <Clock className="size-3.5" />
-            {blocked ? `Can't build ${languageName(lang)} here yet` : real ? "Takes about 1–4 minutes · you can watch every step" : "Preview mode · a simulated build, about 10 seconds"}
+            {blocked
+              ? `Can't build ${languageName(lang)} here yet`
+              : real
+                ? inBrowser
+                  ? "Writes the code in your browser · installing, testing and running it need Kivo on your computer"
+                  : "Takes about 1–4 minutes · you can watch every step"
+                : inBrowser
+                  ? "Preview mode · add your Groq key in Preferences for a real build"
+                  : "Preview mode · a simulated build, about 10 seconds"}
           </span>
         </div>
       </div>

@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils"
 import { saveFile } from "@/state/runners"
 import { useKivo } from "@/state/store"
 import { closeMany, doClose, requestClose, tabFile, tabLabel, usePending } from "./tabActions"
+import { inBrowser } from "@/lib/transport"
 
 /**
  * Editor tabs: dirty dot, close button, middle-click close, a context menu (close others / to the
@@ -93,7 +94,7 @@ export function TabBar() {
                 >
                   Reveal in Explorer
                 </ContextMenuItem>
-                <ContextMenuItem onSelect={() => reveal(tabFile(p))}>Reveal in Finder</ContextMenuItem>
+                {!inBrowser && <ContextMenuItem onSelect={() => reveal(tabFile(p))}>Reveal in Finder</ContextMenuItem>}
               </ContextMenuContent>
             </ContextMenu>
           )

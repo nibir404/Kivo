@@ -11,7 +11,8 @@
 
 // ─── Service Intermediate Representation ──────────────────────────────────────
 
-export type ServiceStatus = "draft" | "planned" | "building" | "ready" | "running" | "failed"
+/** "generated": the code is written but hasn't been installed, tested or started (a build in the browser). */
+export type ServiceStatus = "draft" | "planned" | "building" | "generated" | "ready" | "running" | "failed"
 
 export interface Requirement {
   id: string

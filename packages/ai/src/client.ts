@@ -1,7 +1,8 @@
 /**
  * Kivo AI layer — multiple OpenAI-compatible providers behind one streaming interface.
  *
- * Providers are configured from environment variables (keys never leave the daemon), checked
+ * Providers are configured by the host (`configure`: the daemon from its environment, the browser
+ * from the user's own settings), checked
  * live, and combined into one model pool: the active provider's models come first, and other
  * healthy providers take over when it is rate-limited. A provider that can't authenticate is
  * reported as such and simply never used — nothing breaks.
@@ -50,52 +51,47 @@ interface Provider {
   checkedAt?: number
 }
 
-const list = (v: string | undefined, fallback: string[]) => (v ? v.split(",").map((s) => s.trim()).filter(Boolean) : fallback)
+/** What a host (the daemon from its environment, the browser from its settings) says about one provider. */
+export interface ProviderConfig {
+  id: string
+  label: string
+  baseUrl: string
+  key?: string
+  /** Header used to send the key; "authorization" (the default) means `Authorization: Bearer <key>`. */
+  authHeader?: string
+  models: string[]
+  reasoningEffort?: boolean
+  jsonMode?: boolean
+  tokenBudget?: number
+}
 
-const providers: Provider[] = [
-  {
-    id: "groq",
-    label: "Groq",
-    baseUrl: process.env.GROQ_BASE_URL ?? "https://api.groq.com/openai/v1",
-    key: process.env.GROQ_API_KEY,
-    authHeader: "authorization",
-    models: list([process.env.GROQ_MODEL, process.env.GROQ_FALLBACK_MODELS].filter(Boolean).join(",") || undefined, ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]),
-    reasoningEffort: true,
-    jsonMode: true,
-    tokenBudget: Number(process.env.GROQ_TPM ?? 8000),
-    status: "unknown",
-  },
-  {
-    id: "puku",
-    label: "Puku",
-    baseUrl: process.env.PUKU_BASE_URL ?? "https://api.puku.sh/v1",
-    key: process.env.PUKU_API_KEY,
-    authHeader: (process.env.PUKU_AUTH_HEADER ?? "authorization").toLowerCase(),
-    models: list(process.env.PUKU_MODELS, ["puku-default", "puku-fast"]),
-    reasoningEffort: false,
-    jsonMode: process.env.PUKU_JSON_MODE === "1",
-    tokenBudget: Number(process.env.PUKU_TPM ?? 32000),
-    status: "unknown",
-  },
-  {
-    id: "custom",
-    label: process.env.OPENAI_COMPAT_LABEL ?? "OpenAI-compatible",
-    baseUrl: process.env.OPENAI_COMPAT_BASE_URL ?? "",
-    key: process.env.OPENAI_COMPAT_API_KEY,
-    authHeader: "authorization",
-    models: list(process.env.OPENAI_COMPAT_MODELS, []),
-    reasoningEffort: false,
-    jsonMode: process.env.OPENAI_COMPAT_JSON_MODE !== "0",
-    tokenBudget: Number(process.env.OPENAI_COMPAT_TPM ?? 32000),
-    status: "unknown",
-  },
-]
+export const GROQ_DEFAULTS = { id: "groq", label: "Groq", baseUrl: "https://api.groq.com/openai/v1", models: ["openai/gpt-oss-120b", "openai/gpt-oss-20b"], reasoningEffort: true, jsonMode: true, tokenBudget: 8000 } satisfies ProviderConfig
 
-/** Env vars holding provider secrets — stripped from every child process Kivo starts. */
-export const SECRET_ENV = ["GROQ_API_KEY", "PUKU_API_KEY", "OPENAI_COMPAT_API_KEY"]
+let providers: Provider[] = []
+let activeId = "groq"
+let crossProvider = true
 
-let activeId = process.env.KIVO_PROVIDER ?? "groq"
-const crossProvider = process.env.KIVO_CROSS_PROVIDER_FAILOVER !== "0"
+/**
+ * Set the providers this process can use. Called once at startup by the daemon, and by the browser
+ * whenever the user changes their key. Statuses start "unknown" until `checkAll` runs.
+ */
+export function configure(defs: ProviderConfig[], opts: { active?: string; crossProvider?: boolean } = {}) {
+  providers = defs.map((d) => ({
+    id: d.id,
+    label: d.label,
+    baseUrl: d.baseUrl.replace(/\/+$/, ""),
+    key: d.key || undefined,
+    authHeader: (d.authHeader ?? "authorization").toLowerCase(),
+    models: d.models,
+    reasoningEffort: d.reasoningEffort ?? false,
+    jsonMode: d.jsonMode ?? true,
+    tokenBudget: d.tokenBudget ?? 32000,
+    status: "unknown",
+  }))
+  activeId = opts.active ?? providers[0]?.id ?? "groq"
+  crossProvider = opts.crossProvider ?? true
+  limitedUntil.clear()
+}
 
 const configured = (p: Provider) => Boolean(p.key && p.baseUrl && p.models.length)
 const usable = (p: Provider) => configured(p) && p.status !== "unauthorized" && p.status !== "unreachable"
@@ -144,7 +140,8 @@ export async function checkProvider(p: Provider) {
 export async function checkAll() {
   await Promise.all(providers.map(checkProvider))
   // If the chosen provider can't be used, fall back to the first one that can — and say so.
-  if (!usable(active()) && providers.some(usable)) activeId = providers.find(usable)!.id
+  const a = active()
+  if ((!a || !usable(a)) && providers.some(usable)) activeId = providers.find(usable)!.id
   return describe()
 }
 
@@ -157,7 +154,7 @@ function errorMessage(text: string) {
   }
 }
 
-const active = () => providers.find((p) => p.id === activeId) ?? providers[0]
+const active = (): Provider | undefined => providers.find((p) => p.id === activeId) ?? providers[0]
 
 export function setActive(id: string) {
   const p = providers.find((x) => x.id === id)
@@ -171,13 +168,13 @@ export function setActive(id: string) {
 export function describe() {
   return {
     active: activeId,
-    model: active().models[0] ? `${active().models[0]}` : "",
+    model: active()?.models[0] ?? "",
     providers: providers.map((p) => ({ id: p.id, label: p.label, status: p.status, message: p.message, models: p.models, configured: configured(p), baseUrl: p.baseUrl })),
   }
 }
 
 export const aiAvailable = () => providers.some(usable)
-export const currentModel = () => active().models[0] ?? "none"
+export const currentModel = () => active()?.models[0] ?? "none"
 
 /** Rough token estimate (≈3 chars/token for code + English). */
 export const estimateTokens = (msgs: Msg[]) => Math.ceil(msgs.reduce((a, m) => a + m.content.length, 0) / 3) + 40
@@ -190,19 +187,23 @@ interface Target {
 
 /** Active provider first, then (optionally) other healthy providers. */
 function pool(): Target[] {
-  const order = [active(), ...(crossProvider ? providers.filter((p) => p !== active()) : [])].filter(usable)
+  const a = active()
+  if (!a) return []
+  const order = [a, ...(crossProvider ? providers.filter((p) => p !== a) : [])].filter(usable)
   return order.flatMap((p) => p.models.map((model) => ({ provider: p, model, key: `${p.id}:${model}` })))
 }
 
 const limitedUntil = new Map<string, number>()
 
 class RateLimited extends Error {
-  constructor(
-    public waitMs: number,
-    public requested?: number,
-    public limit?: number,
-  ) {
+  waitMs: number
+  requested?: number
+  limit?: number
+  constructor(waitMs: number, requested?: number, limit?: number) {
     super("rate limited")
+    this.waitMs = waitMs
+    this.requested = requested
+    this.limit = limit
   }
 }
 
@@ -281,7 +282,7 @@ async function guarded<T>(t: Target, opts: StreamOpts, fn: (signal: AbortSignal,
   const forward = () => ac.abort()
   opts.signal?.addEventListener("abort", forward, { once: true })
   let stalled = false
-  let watchdog: NodeJS.Timeout | undefined
+  let watchdog: ReturnType<typeof setTimeout> | undefined
   const bump = () => {
     clearTimeout(watchdog)
     watchdog = setTimeout(() => {
@@ -315,12 +316,12 @@ async function failure(p: Provider, res: Response): Promise<never> {
 
 /** A 4xx/5xx from the provider that isn't a rate limit or an auth failure (e.g. a malformed tool call). */
 export class ProviderError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-    public body: string,
-  ) {
+  status: number
+  body: string
+  constructor(status: number, message: string, body: string) {
     super(message)
+    this.status = status
+    this.body = body
   }
 }
 
@@ -413,7 +414,7 @@ export interface ToolTurn {
 }
 
 /** Per-minute token budget of the provider that will answer next — the agent sizes its context to it. */
-export const tokenBudget = () => (pool()[0]?.provider ?? active()).tokenBudget
+export const tokenBudget = () => (pool()[0]?.provider ?? active())?.tokenBudget ?? 8000
 
 export const estimateChars = (chars: number) => Math.ceil(chars / 3)
 
@@ -513,8 +514,10 @@ async function toolsInner(t: Target, messages: ChatMsg[], tools: ToolDef[], onDe
 // ─── Fast completion (editor ghost text) ─────────────────────────────────────
 
 export class CompletionRateLimited extends Error {
-  constructor(public waitMs: number) {
+  waitMs: number
+  constructor(waitMs: number) {
     super("rate limited")
+    this.waitMs = waitMs
   }
 }
 

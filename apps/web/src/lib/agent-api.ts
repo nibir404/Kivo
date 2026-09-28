@@ -1,5 +1,6 @@
 /** Client for the daemon's agent (/api/agent/*) and autocomplete (/api/ai/complete) routes. */
 import { sse } from "@/lib/api"
+import { apiFetch } from "@/lib/transport"
 
 export interface Todo {
   content: string
@@ -33,7 +34,7 @@ export interface RunBody {
 }
 
 async function post(url: string, body: unknown) {
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+  const res = await apiFetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`)
 }
 
@@ -48,7 +49,7 @@ export type CompleteResult = { ok: true; completion: string } | { ok: false; ret
 
 /** One autocomplete request. A 429/503 comes back as a back-off hint rather than an exception. */
 export async function requestCompletion(body: { path: string; language: string; prefix: string; suffix: string }, signal: AbortSignal): Promise<CompleteResult> {
-  const res = await fetch("/api/ai/complete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal })
+  const res = await apiFetch("/api/ai/complete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal })
   const data = await res.json().catch(() => ({}))
   if (res.ok) return { ok: true, completion: typeof data.completion === "string" ? data.completion : "" }
   return { ok: false, retryAfterMs: Number(data.retryAfterMs) || 0 }

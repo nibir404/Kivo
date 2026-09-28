@@ -9,6 +9,7 @@ import { useKivo } from "@/state/store"
 import { useUi } from "../capture"
 import { handles, useTerminals, type TerminalTab } from "./store"
 import { searches, TerminalSession } from "./TerminalSession"
+import { inBrowser } from "@/lib/transport"
 
 const mod = typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "⌘" : "Ctrl+Shift+"
 
@@ -21,6 +22,18 @@ export function TerminalPanel({ visible }: { visible: boolean }) {
   useEffect(() => {
     if (daemon) void hydrate()
   }, [daemon, hydrate])
+
+  if (inBrowser) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-1 p-4 text-center text-[12px] text-muted-foreground">
+        <SquareTerminal className="size-5 opacity-60" />
+        <div>Kivo is running in your browser, which can't open a shell on your computer.</div>
+        <div>
+          For a real terminal with your files, run Kivo locally: <code className="font-mono text-foreground">npm run dev</code>, then open <code className="font-mono text-foreground">localhost:5174</code>.
+        </div>
+      </div>
+    )
+  }
 
   if (!daemon) {
     return (
@@ -220,7 +233,7 @@ export function TerminalToolbar() {
   const bottomMax = useUi((s) => s.bottomMax)
   const toggleBottomMax = useUi((s) => s.toggleBottomMax)
   const daemon = useKivo((s) => s.daemon)
-  if (!daemon) return null
+  if (!daemon || inBrowser) return null
   return (
     <div className="ml-auto flex min-w-0 items-center gap-0.5">
       <div className="flex min-w-0 items-center gap-0.5 overflow-x-auto" role="tablist" aria-label="Terminals">

@@ -146,7 +146,7 @@ Only Python is `buildable` today. Other languages are planned and reviewed norma
 
 ### Daemon boundary
 
-Everything entering the daemon is untrusted and validated in `apps/daemon/src/build/spec.ts` / `apps/daemon/src/http/http.ts`: JSON bodies are size-limited and parsed with 4xx errors, service ids are slugs (`services/<id>` can't escape), stacks are reduced to known languages, and the Intent Agent is grounded in the *actual* service list sent by the UI — never hard-coded names. New services that share a name with a detected service get their own id and directory instead of replacing it.
+Everything entering the daemon is untrusted and validated in `packages/ai/src/spec.ts` / `apps/daemon/src/http/http.ts`: JSON bodies are size-limited and parsed with 4xx errors, service ids are slugs (`services/<id>` can't escape), stacks are reduced to known languages, and the Intent Agent is grounded in the *actual* service list sent by the UI — never hard-coded names. New services that share a name with a detected service get their own id and directory instead of replacing it.
 
 ### Agents
 
@@ -371,19 +371,17 @@ apps/daemon/src/
   http/http.ts              JSON, SSE and error helpers
   http/web.ts               Host/Origin policy (DNS-rebinding guard), serving the built UI with security headers
   events/bus.ts             in-process event bus → /api/events
-  ai/ai.ts                  streaming client, provider/model failover, rate-limit waits, stall watchdog
-  ai/prompts.ts             Intent / Implementation / Repair agent prompts and conventions
+  ai/ai.ts                  provider configuration from .env (the client is @kivo/ai/client)
   build/pipeline.ts         plan execution: codegen → install → lint/autofix → test → repair → boot → commit
-  build/scaffold.ts         deterministic infrastructure templates (db, outbox, kv, test fixtures)
-  build/spec.ts             model output → validated ServiceSpec
   build/toolchains.ts       per-language preflight
   projects/workspace.ts     the current project, safe paths, file listing, detection, git
   projects/projects.ts      open folder / clone / switch routes
   editor/editor.ts          file operations (trash), search/replace, file watcher
   scm/scm.ts                git status, diffs, staging, commits, branches, remotes
-  agent/agent.ts            tool-calling agent with approvals; inline completion
+  agent/agent.ts            the agent's filesystem + shell workspace and HTTP routes (the loop is @kivo/ai/agent)
   terminal/terminals.ts     terminal sessions: detach/re-attach, replay buffer, flow control, idle expiry
-apps/daemon/seed-project/   the demo project copied into .kivo-workspace on first run
+packages/ai/src/            client.ts (streaming, failover) · prompts.ts · spec.ts · codegen.ts · scaffold.ts · agent.ts (the loop)
+packages/seed-project/      the demo project, copied into .kivo-workspace on first run
 ```
 
 Lessons from running it against a free-tier model, now built into the pipeline:
@@ -393,3 +391,23 @@ Lessons from running it against a free-tier model, now built into the pipeline:
 - **Repairs are edits, not rewrites.** SEARCH/REPLACE blocks fit the token budget and can't clobber working files. The model only edits files it has seen verbatim.
 - **Model output is untrusted input.** JSON is coerced field by field; truncated file blocks are discarded rather than half-written.
 - **Be honest about state.** "Running" requires clean lint, passing tests and a healthy process. Anything less boots "for inspection" with the real failure output.
+
+---
+
+## 16. Browser mode (the hosted web app)
+
+The UI talks to Kivo only through `apps/web/src/lib/transport.ts`. On `localhost` requests go to the daemon. On any other host (the static deploy), `transport.ts` lazily loads `apps/web/src/backend` and hands every `/api/*` request to it as a standard `Request`, and it answers with standard `Response`s, SSE streams included. Nothing above the transport knows which one answered.
+
+```
+UI ── apiFetch("/api/…") ──▶ transport ──▶ daemon (localhost)                  full system
+                                     └──▶ browser backend (hosted)             same API, in the page
+                                            ├─ projects.ts   demo · picked folders · GitHub imports (IndexedDB registry)
+                                            ├─ fs/           MemoryFS (IndexedDB) · HandleFS (File System Access API)
+                                            ├─ routes/       core · editor · ai · agent · build (same shapes as the daemon)
+                                            └─ settings.ts   the user's Groq key (localStorage, verified before saving)
+```
+
+Shared code, not ports: the provider client, prompts, spec validation, codegen parsing and the agent loop live in `@kivo/ai` and run unchanged in both places. The agent works against an `AgentWorkspace` interface: the daemon supplies the real filesystem and a shell; the browser supplies project storage and no shell, so `run_command` is never offered to the model. Search and replace use `@kivo/core/match` on both sides.
+
+What can't run in a page (a shell, git, Python installs/tests/servers) answers `501` with a reason, and the UI shows it: the terminal and source-control panels explain it, and builds mark install, test and boot as skipped, ending in the `generated` status ("Code written") rather than `running`.
+

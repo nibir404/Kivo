@@ -19,8 +19,8 @@
     "prod": "npm run build && npm start",
     "preview": "npm run preview -w @kivo/web",
     "lint": "oxlint",
-    "typecheck": "npm run typecheck --workspaces",
-    "test": "npm test --workspaces",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
     "check": "npm run typecheck && npm run lint && npm test",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
   },

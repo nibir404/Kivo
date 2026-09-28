@@ -1,4 +1,5 @@
 /** Client for the daemon's /api/editor routes (explorer file operations, find & replace in files). */
+import { apiFetch } from "./transport"
 
 export interface SearchParams {
   query: string
@@ -39,7 +40,7 @@ export interface ReplaceResult {
 }
 
 async function post<T>(route: string, body: unknown, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`/api/editor/${route}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal })
+  const res = await apiFetch(`/api/editor/${route}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
   return data as T
@@ -47,7 +48,7 @@ async function post<T>(route: string, body: unknown, signal?: AbortSignal): Prom
 
 export const editorApi = {
   dirs: async () => {
-    const res = await fetch("/api/editor/dirs")
+    const res = await apiFetch("/api/editor/dirs")
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return ((await res.json()) as { dirs: string[] }).dirs
   },

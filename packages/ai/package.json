@@ -1,0 +1,17 @@
+{
+  "name": "@kivo/ai",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Kivo's AI layer, shared by the daemon and the browser: OpenAI-compatible provider client with failover, prompts, spec validation, and the coding agent loop. Runs anywhere fetch does.",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@kivo/core": "*"
+  }
+}

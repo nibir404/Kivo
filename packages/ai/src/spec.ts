@@ -1,7 +1,7 @@
 import { parseIntent } from "@kivo/core/intent"
 import { detectStack, frameworksFor, LANGUAGES } from "@kivo/core/stacks"
 import type { Decision, Endpoint, ProjectAnalysis, ServiceSpec, StackChoice } from "@kivo/core/types"
-import { HttpError } from "../http/http"
+import { HttpError } from "./errors"
 
 /**
  * The Service IR at the daemon boundary. Everything arriving here — from the model or from the

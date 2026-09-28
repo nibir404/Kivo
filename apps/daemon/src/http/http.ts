@@ -1,14 +1,9 @@
 import type http from "node:http"
 
-/** An error with an HTTP status the client should see (400s), as opposed to a crash (500). */
-export class HttpError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message)
-  }
-}
+import { HttpError } from "@kivo/ai/errors"
+
+/** An error with an HTTP status the client should see (400s), as opposed to a crash (500). Shared with @kivo/ai. */
+export { HttpError }
 
 const MAX_BODY = 5 * 1024 * 1024
 

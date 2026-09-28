@@ -1,10 +1,11 @@
-import { Check, RefreshCw } from "lucide-react"
+import { Check, KeyRound, RefreshCw } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import type { ProviderInfo } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { refreshProviders, switchProvider } from "@/state/runners"
+import { inBrowser } from "@/lib/transport"
 import { useKivo } from "@/state/store"
 
 const DOT: Record<ProviderInfo["status"], string> = {
@@ -41,7 +42,7 @@ export function ProviderMenu({ compactTrigger = false }: { compactTrigger?: bool
         ) : (
           <button className="flex items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground">
             <span className={cn("size-1.5 rounded-full", ok ? "bg-success" : daemon ? "bg-warning" : "bg-muted-foreground/40")} />
-            {ok && active ? `${active.label} · ${ai!.model.split("/").pop()}` : daemon ? "no AI provider" : "offline"}
+            {ok && active ? `${active.label} · ${ai!.model.split("/").pop()}` : inBrowser ? "add Groq key" : daemon ? "no AI provider" : "offline"}
           </button>
         )}
       </DropdownMenuTrigger>
@@ -84,9 +85,18 @@ export function ProviderMenu({ compactTrigger = false }: { compactTrigger?: bool
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
-        <div className="px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
-          Keys live in <span className="font-mono">.env</span> and never reach the browser. When the active provider is rate-limited, other connected providers take over.
-        </div>
+        {inBrowser ? (
+          <>
+            <DropdownMenuItem onSelect={() => useKivo.getState().setDialog("settings")}>
+              <KeyRound /> {ok ? "Change Groq key…" : "Add your Groq key…"}
+            </DropdownMenuItem>
+            <div className="px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">Kivo is running in your browser: it calls Groq directly with your own key, stored only in this browser.</div>
+          </>
+        ) : (
+          <div className="px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            Keys live in <span className="font-mono">.env</span> and never reach the browser. When the active provider is rate-limited, other connected providers take over.
+          </div>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )

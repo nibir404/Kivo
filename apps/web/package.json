@@ -12,7 +12,6 @@
     "typecheck": "tsc -p tsconfig.test.json --noEmit && tsc -p tsconfig.node.json --noEmit"
   },
   "dependencies": {
-    "@kivo/core": "*",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-css": "^6.3.1",
@@ -37,6 +36,9 @@
     "@codemirror/view": "^6.43.13",
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
+    "@kivo/ai": "*",
+    "@kivo/core": "*",
+    "@kivo/seed-project": "*",
     "@lezer/highlight": "^1.2.4",
     "@uiw/react-codemirror": "^4.25.12",
     "@xterm/addon-fit": "^0.11.0",

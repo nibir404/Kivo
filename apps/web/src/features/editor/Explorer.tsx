@@ -10,6 +10,7 @@ import { useKivo } from "@/state/store"
 import { baseName, checkName, copyPath, createIn, duplicate, join, openInTerminal, parentOf, renameTo, reveal, trash } from "./fileOps"
 import { under, useEditor } from "./store"
 import { isDirty, refreshTree } from "./tabs"
+import { inBrowser } from "@/lib/transport"
 
 /**
  * The Code-mode explorer: the project's files as a tree, with the file operations of a desktop
@@ -139,16 +140,20 @@ export function Explorer() {
             <ContextMenuItem onSelect={() => startNew("new-folder", "")}>
               <FolderPlus /> New Folder…
             </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem onSelect={() => reveal("")}>
-              <FolderOpen /> Reveal Project in Finder
-            </ContextMenuItem>
-            <ContextMenuItem onSelect={() => openInTerminal("")}>
-              <SquareTerminal /> Open in Terminal
-            </ContextMenuItem>
-            <ContextMenuItem onSelect={() => copyPath("", true)}>
-              <Copy /> Copy Project Path
-            </ContextMenuItem>
+            {!inBrowser && (
+              <>
+                <ContextMenuSeparator />
+                <ContextMenuItem onSelect={() => reveal("")}>
+                  <FolderOpen /> Reveal Project in Finder
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => openInTerminal("")}>
+                  <SquareTerminal /> Open in Terminal
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => copyPath("", true)}>
+                  <Copy /> Copy Project Path
+                </ContextMenuItem>
+              </>
+            )}
           </ContextMenuContent>
         </ContextMenu>
       </div>
@@ -158,7 +163,9 @@ export function Explorer() {
           <DialogHeader>
             <DialogTitle>Delete {confirm ? `“${baseName(confirm.path)}”` : ""}?</DialogTitle>
             <DialogDescription>
-              {confirm?.dir ? "The folder and everything in it" : "The file"} will be moved to the Trash. You can restore it from there.
+              {inBrowser
+                ? `${confirm?.dir ? "The folder and everything in it" : "The file"} will be deleted permanently — a browser can't move files to the Trash.`
+                : `${confirm?.dir ? "The folder and everything in it" : "The file"} will be moved to the Trash. You can restore it from there.`}
               {dirtyInside.length > 0 && ` Unsaved changes in ${dirtyInside.length === 1 ? baseName(dirtyInside[0]) : `${dirtyInside.length} open files`} will be lost.`}
             </DialogDescription>
           </DialogHeader>
@@ -175,7 +182,7 @@ export function Explorer() {
                 if (c) void trash(c.path)
               }}
             >
-              <Trash /> Move to Trash
+              <Trash /> {inBrowser ? "Delete" : "Move to Trash"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -328,13 +335,17 @@ function TreeRow({ node, depth }: { node: Node; depth: number }) {
           <ContextMenuItem onSelect={() => copyPath(node.path, false)}>
             <Copy /> Copy Relative Path
           </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onSelect={() => reveal(node.path)}>
-            <FolderOpen /> Reveal in Finder
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={() => openInTerminal(dirOf)}>
-            <SquareTerminal /> Open in Terminal
-          </ContextMenuItem>
+          {!inBrowser && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onSelect={() => reveal(node.path)}>
+                <FolderOpen /> Reveal in Finder
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => openInTerminal(dirOf)}>
+                <SquareTerminal /> Open in Terminal
+              </ContextMenuItem>
+            </>
+          )}
         </ContextMenuContent>
       </ContextMenu>
       {open && (

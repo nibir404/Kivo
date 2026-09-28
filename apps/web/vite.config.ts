@@ -1,9 +1,30 @@
 import path from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig, loadEnv } from 'vite'
+import { readSeedFiles, SEED_DIR } from '@kivo/seed-project'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 
 const repoRoot = path.resolve(import.meta.dirname, '../..')
+
+/**
+ * `virtual:kivo-seed-project`: the demo project's files as one JSON module, for the in-browser
+ * demo. Read at build time (so .env.example etc. never need to be served from disk) and imported
+ * lazily, so it's its own small chunk.
+ */
+function seedProject(): Plugin {
+  const id = 'virtual:kivo-seed-project'
+  const resolved = `\0${id}`
+  return {
+    name: 'kivo-seed-project',
+    resolveId: (source) => (source === id ? resolved : undefined),
+    load(source) {
+      if (source !== resolved) return
+      const files = readSeedFiles()
+      for (const rel of Object.keys(files)) this.addWatchFile(path.join(SEED_DIR, rel))
+      return `export default ${JSON.stringify(files)}`
+    },
+  }
+}
 
 export default defineConfig(({ mode }) => {
   // The same .env the daemon reads (at the repo root), so changing a port there moves both sides together.
@@ -13,7 +34,9 @@ export default defineConfig(({ mode }) => {
   const uiPort = Number(env.KIVO_UI_PORT ?? 5174)
 
   return {
-    plugins: [react(), tailwindcss()],
+    // Where the built UI is served from: "/" for `npm start`, e.g. "/app/" for the hosted site (KIVO_BASE=/app/ npm run build).
+    base: env.KIVO_BASE ?? '/',
+    plugins: [react(), tailwindcss(), seedProject()],
     resolve: {
       alias: { '@': path.resolve(import.meta.dirname, './src') },
     },

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { api, sse, type DirListing, type ProjectInfo } from "@/lib/api"
+import { inBrowser } from "@/lib/transport"
 import { openProjectFolder, reloadCurrentProject } from "@/state/runners"
 import { useKivo } from "@/state/store"
 import { useUi } from "../capture"
@@ -31,7 +32,11 @@ export function ProjectDialogs() {
 
   return (
     <>
-      <OpenFolderDialog open={dialog === "open"} onClose={() => setDialog(null)} onClone={() => setDialog("clone")} />
+      {inBrowser ? (
+        <BrowserOpenDialog open={dialog === "open"} onClose={() => setDialog(null)} onClone={() => setDialog("clone")} />
+      ) : (
+        <OpenFolderDialog open={dialog === "open"} onClose={() => setDialog(null)} onClone={() => setDialog("clone")} />
+      )}
       <CloneDialog open={dialog === "clone"} onClose={() => setDialog(null)} />
     </>
   )
@@ -185,6 +190,67 @@ function OpenFolderDialog({ open, onClose, onClone }: { open: boolean; onClose: 
   )
 }
 
+/**
+ * Open a project in the hosted app: the browser's own folder picker (Chrome/Edge's File System
+ * Access API — the browser asks before Kivo may read or write it), or a GitHub import.
+ */
+function BrowserOpenDialog({ open, onClose, onClone }: { open: boolean; onClose: () => void; onClone: () => void }) {
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const supported = typeof window !== "undefined" && "showDirectoryPicker" in window
+
+  const choose = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      // Straight from the click: the browser only shows its picker in response to a user gesture.
+      const { path: picked } = await api.pickFolder()
+      if (picked) {
+        await openProjectFolder(picked)
+        onClose()
+      }
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="gap-4 sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Open a project</DialogTitle>
+          <DialogDescription>A folder on your computer: Kivo reads and edits the files in place, after your browser asks you to allow it. Nothing is uploaded — the files stay on your disk.</DialogDescription>
+        </DialogHeader>
+        {supported ? (
+          <Button onClick={choose} disabled={busy} className="justify-start gap-2">
+            {busy ? <Loader2 className="animate-spin" /> : <FolderOpen />}
+            {busy ? "Choose a folder in the browser's window…" : "Choose a folder…"}
+          </Button>
+        ) : (
+          <p className="rounded-lg border px-3 py-2 text-[12.5px] text-muted-foreground">This browser can't open folders from your disk. Use Chrome or Edge, or import a public GitHub repository below.</p>
+        )}
+        {error && (
+          <p className="flex items-start gap-2 rounded-lg border border-destructive/30 px-3 py-2 text-[12.5px] text-destructive">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+            {error}
+          </p>
+        )}
+        <p className="text-[11.5px] text-muted-foreground">The terminal, git and running builds need the Kivo app on your computer; in the browser you get the editor, search, AI and the agent.</p>
+        <DialogFooter className="items-center sm:justify-between">
+          <Button variant="ghost" size="sm" onClick={onClone} className="gap-1.5 text-muted-foreground">
+            <GitBranch /> Import from GitHub instead
+          </Button>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function crumbsOf(abs: string, home?: string) {
   const out: { label: string; path: string }[] = []
   let rest = abs
@@ -275,9 +341,15 @@ function CloneDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
         }}
       >
         <DialogHeader>
-          <DialogTitle>Clone a repository</DialogTitle>
+          <DialogTitle>{inBrowser ? "Import from GitHub" : "Clone a repository"}</DialogTitle>
           <DialogDescription>
-            Uses your own git setup, so private repositories work if you're signed in (an SSH key, or <code className="font-mono text-[12px]">gh auth login</code>).
+            {inBrowser ? (
+              "A public repository's files are downloaded into this browser, where you can browse, search, edit and use the AI on them. Private repositories and git history need the Kivo app on your computer."
+            ) : (
+              <>
+                Uses your own git setup, so private repositories work if you're signed in (an SSH key, or <code className="font-mono text-[12px]">gh auth login</code>).
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -289,13 +361,15 @@ function CloneDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
         >
           <label className="block space-y-1">
             <span className="text-[12px] text-muted-foreground">Repository</span>
-            <Input ref={repoInput} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="owner/repo · https://github.com/owner/repo · git@github.com:owner/repo.git" className="font-mono text-[12px]" spellCheck={false} disabled={state.running} />
+            <Input ref={repoInput} value={url} onChange={(e) => setUrl(e.target.value)} placeholder={inBrowser ? "owner/repo · https://github.com/owner/repo" : "owner/repo · https://github.com/owner/repo · git@github.com:owner/repo.git"} className="font-mono text-[12px]" spellCheck={false} disabled={state.running} />
           </label>
-          <div className="grid grid-cols-[1fr_10rem] gap-2">
-            <label className="block space-y-1">
-              <span className="text-[12px] text-muted-foreground">Into folder</span>
-              <Input value={parent} onChange={(e) => setParent(e.target.value)} className="font-mono text-[12px]" spellCheck={false} disabled={state.running} />
-            </label>
+          <div className={inBrowser ? "grid gap-2" : "grid grid-cols-[1fr_10rem] gap-2"}>
+            {!inBrowser && (
+              <label className="block space-y-1">
+                <span className="text-[12px] text-muted-foreground">Into folder</span>
+                <Input value={parent} onChange={(e) => setParent(e.target.value)} className="font-mono text-[12px]" spellCheck={false} disabled={state.running} />
+              </label>
+            )}
             <label className="block space-y-1">
               <span className="text-[12px] text-muted-foreground">As</span>
               <Input
@@ -334,11 +408,11 @@ function CloneDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={close}>
-              {state.running ? "Cancel clone" : "Cancel"}
+              {state.running ? (inBrowser ? "Cancel import" : "Cancel clone") : "Cancel"}
             </Button>
             <Button type="submit" disabled={!url.trim() || state.running}>
               {state.running && <Loader2 className="animate-spin" />}
-              Clone and open
+              {inBrowser ? "Import and open" : "Clone and open"}
             </Button>
           </DialogFooter>
         </form>

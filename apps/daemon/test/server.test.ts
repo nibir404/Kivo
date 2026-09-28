@@ -6,7 +6,7 @@ import { parseIntent } from "@kivo/core/intent"
 import type { ServiceSpec, StackChoice } from "@kivo/core/types"
 import { HttpError, readJson } from "../src/http/http"
 import { applyEdit, deriveRequirements, parseEdits, parseFiles, runBuild, sandboxEnv, type BuildEvent } from "../src/build/pipeline"
-import { normalizeSpec, projectContext, resolveStack, sanitizeStack, validateBuildSpec } from "../src/build/spec"
+import { normalizeSpec, projectContext, resolveStack, sanitizeStack, validateBuildSpec } from "@kivo/ai/spec"
 import { toolchainStatus } from "../src/build/toolchains"
 import { hostOk, originOk } from "../src/http/web"
 

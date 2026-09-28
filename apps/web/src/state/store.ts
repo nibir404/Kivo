@@ -486,7 +486,8 @@ export const useKivo = create<State>()(
         const booted = !!info.url
         const tech = `${languageName(spec.implementation.language)} · ${frameworkName(spec.implementation.language, spec.implementation.framework)}`
         const { node, edges } = nodesForService(spec.id, spec.name, tech, spec.purpose, spec.dependsOn.filter((d) => get().nodes.some((n) => n.id === d)), !!spec.cache)
-        const status = ok ? "running" : "failed"
+        // Written but not started (a browser build writes code; only the daemon installs, tests and boots it).
+        const status = !ok ? "failed" : booted ? "running" : "generated"
         set((s) => ({
           build: { ...b, finished: true, ok, index: b.steps.length, ...info },
           services: s.services.map((x) => (x.id === spec.id ? { ...x, status, files, tests: info.tests ?? x.tests } : x)),

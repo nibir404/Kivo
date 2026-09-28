@@ -7,6 +7,7 @@ import type { ContextItem, KivoRef, LogLine, ServiceSpec } from "@kivo/core/type
 import { api, sse, subscribe } from "@/lib/api"
 import { useTerminals } from "@/shell/terminal/store"
 import { useKivo, type StepRun } from "./store"
+import { inBrowser } from "@/lib/transport"
 
 /**
  * Runners connect the UI to the local daemon. Every one has an offline fallback so the
@@ -58,7 +59,7 @@ async function connect(attempt = 0): Promise<void> {
     )
   } catch {
     set({ daemon: false, ai: null })
-    if (attempt === 3 && !warned) {
+    if (attempt === 3 && !warned && !inBrowser) {
       warned = true
       toast("Kivo daemon not connected", { description: "Working offline with simulated builds. Kivo will reconnect automatically when it's running (npm run dev)." })
     }
@@ -290,7 +291,15 @@ export async function build() {
         case "done":
           flush()
           S().finishRealBuild(e.ok, { url, routes, commit: e.commit, tests })
-          out.push(e.ok ? `✓ ${spec.name} built, tested and running — commit ${e.commit}` : `✗ ${spec.name} finished with failures — see the failed step${e.commit ? ` (checkpoint ${e.commit})` : ""}`)
+          out.push(
+            inBrowser
+              ? e.ok
+                ? `✓ ${spec.name}: code written to services/${spec.id}/ — install, test and run it with Kivo on your computer (npm run dev)`
+                : `✗ ${spec.name} finished with failures — see the failed step`
+              : e.ok
+                ? `✓ ${spec.name} built, tested and running — commit ${e.commit}`
+                : `✗ ${spec.name} finished with failures — see the failed step${e.commit ? ` (checkpoint ${e.commit})` : ""}`,
+          )
           break
         case "error":
           throw new Error(e.message)
@@ -417,6 +426,13 @@ export function askAboutFailure(specId: string) {
 export async function refreshProviders() {
   const d = await api.providers()
   set((s) => ({ ai: s.ai ? { ...s.ai, ...d, ai: d.providers.some((p) => p.status === "ok" || p.status === "unknown") } : s.ai }))
+}
+
+/** Browser mode: save the user's Groq key (or remove it with ""), then refresh AI status everywhere. */
+export async function saveGroqKey(key: string) {
+  const d = await api.setGroqKey(key)
+  set((s) => ({ ai: s.ai ? { ...s.ai, ...d, ai: d.providers.some((p) => p.status === "ok" || p.status === "unknown") } : s.ai }))
+  return d.providers.find((p) => p.id === "groq")
 }
 
 export async function switchProvider(id: string) {

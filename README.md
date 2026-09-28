@@ -56,17 +56,18 @@ Run one workspace with `-w`, e.g. `npm test -w @kivo/daemon` or `npm run dev -w 
 
 ## Project Structure
 
-An npm-workspaces monorepo: two apps and one shared package.
+An npm-workspaces monorepo: two apps and three shared packages.
 
 ```
 kivo/
 ├── apps/
-│   ├── web/                  @kivo/web — the browser UI (React 19, Vite, Tailwind, shadcn)
+│   ├── web/                  @kivo/web — the UI (React 19, Vite, Tailwind, shadcn)
 │   │   ├── src/
 │   │   │   ├── shell/        app frame: top bar, navigator, panels, ⌘K, dialogs, projects, terminal
 │   │   │   ├── features/     build · code · editor · scm · agent · observe · learn · library · workspace
-│   │   │   ├── state/        zustand store and the actions that talk to the daemon
-│   │   │   ├── lib/          typed clients for the daemon API
+│   │   │   ├── state/        zustand store and the actions that talk to the API
+│   │   │   ├── lib/          typed API clients + transport.ts (daemon, or the in-page backend)
+│   │   │   ├── backend/      the browser backend: the daemon's API answered inside the page
 │   │   │   └── components/ui/  shadcn primitives
 │   │   ├── test/
 │   │   └── vite.config.ts
@@ -74,24 +75,44 @@ kivo/
 │       ├── src/
 │       │   ├── index.ts      server entry and routes
 │       │   ├── http/         response helpers, Host/Origin policy, static UI serving
-│       │   ├── ai/           model providers and prompts
-│       │   ├── build/        the build pipeline, templates, spec validation, toolchains
+│       │   ├── ai/           provider config from .env (the client itself is @kivo/ai)
+│       │   ├── build/        the build pipeline (installs, tests, boot) and toolchains
 │       │   ├── projects/     current project, open / clone / switch
 │       │   ├── editor/ scm/ agent/ terminal/   one folder per feature API
-│       │   └── paths.ts      where the repo, seed project and built UI live
-│       ├── seed-project/     the demo project
+│       │   └── paths.ts      where the repo and built UI live
 │       └── test/
 ├── packages/
-│   └── core/                 @kivo/core — pure-TypeScript domain model shared by both apps
-│       ├── src/              service IR, intent parsing, planning, stack detection, search matching
-│       └── test/
+│   ├── core/                 @kivo/core — pure domain model: service IR, intent, planning, detection, search matching
+│   ├── ai/                   @kivo/ai — AI layer for both daemon and browser: provider client with failover,
+│   │                         prompts, spec validation, codegen parsing, the coding-agent loop
+│   └── seed-project/         @kivo/seed-project — the demo project's files
 ├── docs/                     architecture and project memory
-├── scripts/
 ├── .github/workflows/ci.yml  typecheck, lint, test and build on Linux and macOS
 └── tsconfig.base.json        compiler options every workspace extends
 ```
 
-Boundaries: `@kivo/core` imports nothing from either app, and the web app never imports daemon code. They talk only over the daemon's HTTP/SSE and WebSocket API. The `.env` file and the `.kivo-workspace/` data folder stay at the repo root. `npm run build` writes the UI to `apps/web/dist`, which `npm start` serves (`KIVO_WEB_DIST` points it elsewhere).
+Boundaries: the packages import nothing from either app, and the web app never imports daemon code. They talk only over Kivo's HTTP/SSE and WebSocket API. That API is served by the daemon, or, in the hosted app, by `apps/web/src/backend`, which implements the same routes inside the page. The `.env` file and the `.kivo-workspace/` data folder stay at the repo root. `npm run build` writes the UI to `apps/web/dist`, which `npm start` serves (`KIVO_WEB_DIST` points it elsewhere).
+
+---
+
+## Kivo in the Browser (Hosted Web App)
+
+The same build runs as a static site with no daemon. On any host other than `localhost`, Kivo answers its own API inside the page:
+
+| Works in the browser | How |
+|---|---|
+| **AI**: planning, Ask, Explain, inline ⌘K edits, Tab autocomplete, the Agent | Groq is called directly from the page with **your own key**, pasted once in Preferences → AI. The key is checked with Groq before it's saved, stored only in that browser's `localStorage`, and sent only to `api.groq.com`. The deployed files contain no key. |
+| **Your folders** | *Open folder* uses the browser's folder picker (Chrome, Edge). The browser asks before Kivo may read or write it. Files are edited in place on your disk; nothing is uploaded. |
+| **GitHub** | *Import from GitHub* downloads a public repository's text files into browser storage (IndexedDB). |
+| **The demo** | Kept in this browser; edits persist; *Reset demo project* restores it. |
+| **Editor** | Explorer (create, rename, move, duplicate, delete), Quick Open, find & replace in files, the same matcher as the daemon. |
+| **Builds** | Every code-generation step runs for real and writes the files. Install, test and boot are marked *skipped*, and the service is shown as *Code written*, never as running. |
+
+A web page can't run a shell, git or Python on your computer, so the **terminal, source control and running services** say they need Kivo on your computer (`npm run dev`). Deleting in the browser is permanent (there's no system trash), and the confirmation says so.
+
+Build for a sub-path (the hosted site lives at `/app/`) with `KIVO_BASE=/app/ npm run build`, then deploy `apps/web/dist`. To try browser mode locally, open `http://localhost:5174/?backend=browser` (`?backend=daemon` switches back).
+
+---
 
 ## What's Real in Kivo
 
@@ -102,6 +123,7 @@ Boundaries: `@kivo/core` imports nothing from either app, and the web app never 
 | **Pipeline Verification** | Import detection → allowlisted `pip install` → `pyflakes` linting (+ deterministic import autofix) → `pytest` suite → up to 3 AI repair iterations using exact SEARCH/REPLACE blocks → `uvicorn` boot with `/health` polling. |
 | **Radical Honesty** | A service is marked **running** only when lint is clean and 100% of tests pass. Failing services boot "for inspection" with live failure logs exposed. |
 | **Git & Source Control (SCM)** | Complete in-app Git GUI powered by Git Porcelain v2: stage/unstage files, view unified and split diffs, generate AI commit messages grounded in staged diffs, switch/create branches, publish upstream, push, and pull. Safe discard sends files to OS Trash. |
+| **Runs in the Browser** | The hosted web app works without the daemon: AI with your own Groq key, your local folders (File System Access API), GitHub imports and the editor. See [Kivo in the Browser](#kivo-in-the-browser-hosted-web-app). |
 | **Autonomous Coding Agent** | Multi-turn tool-calling loop (`list_files`, `read_file`, `search`, `edit_file`, `run_command` with user approval checkpoints). Path traversal protection, `.git` write guards, and inline ghost-text code autocomplete. |
 | **Your Projects** | Open any folder on your machine (`⌘O`: native Finder picker or an in-app folder browser) or clone a repository (`owner/repo`, HTTPS or SSH URL) with your own git credentials. Recent projects are remembered. Your projects are never auto-committed and use your git identity and tools; only the built-in demo is Kivo-managed. |
 | **Code Editor** | CodeMirror 6 with Python, TS/JS, Go, Rust, Java, C/C++, CSS, HTML, PHP, SQL, Markdown, YAML, JSON and more. Explorer with new/rename/move (drag & drop)/duplicate/delete-to-Trash; Quick Open (`⌘P`), go to line/symbol; find & replace across files (ripgrep → git grep → JS scan); multi-cursor; breadcrumbs; live reload when files change on disk, with a conflict bar for unsaved edits; inline `⌘K` AI edits and Tab autocomplete. |

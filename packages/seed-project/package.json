@@ -1,0 +1,14 @@
+{
+  "name": "@kivo/seed-project",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Kivo's demo project (\"tandem\"): the daemon copies it into .kivo-workspace on first run, and the web app bundles it for the in-browser demo.",
+  "files": [
+    "index.ts",
+    "files"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  }
+}

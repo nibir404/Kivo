@@ -10,7 +10,5 @@ import path from "node:path"
 export const DAEMON_ROOT = path.resolve(import.meta.dirname, "..")
 /** The repository root (holds .env and, by default, .kivo-workspace). */
 export const REPO_ROOT = path.resolve(DAEMON_ROOT, "../..")
-/** The demo project copied into the Kivo workspace on first run. */
-export const SEED_PROJECT = path.join(DAEMON_ROOT, "seed-project")
 /** The built web UI served by `--serve`. KIVO_WEB_DIST points it elsewhere (e.g. a packaged build). */
 export const WEB_DIST = process.env.KIVO_WEB_DIST ? path.resolve(process.env.KIVO_WEB_DIST) : path.join(REPO_ROOT, "apps/web/dist")

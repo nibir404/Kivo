@@ -6,9 +6,11 @@ import { specToYaml } from "@kivo/core/intent"
 import { planFor } from "@kivo/core/plan"
 import type { PlanStep, ServiceSpec } from "@kivo/core/types"
 import { SECRET_ENV, stream } from "../ai/ai"
-import { CODEGEN_SYSTEM, codegenUser, REPAIR_SYSTEM, repairUser } from "../ai/prompts"
+import { applyEdit } from "@kivo/ai/agent"
+import { CODEGEN_SYSTEM, codegenUser, REPAIR_SYSTEM, repairUser } from "@kivo/ai/prompts"
 import { bus } from "../events/bus"
-import { PY_SCAFFOLD } from "./scaffold"
+import { PY_SCAFFOLD } from "@kivo/ai/scaffold"
+import { contextFiles, openapiFor, parseEdits, parseFiles, type BuildEvent } from "@kivo/ai/codegen"
 import { toolchainStatus } from "./toolchains"
 import { git, isGitRepo, project, projectDir, VENV, WORKSPACES, writeFile } from "../projects/workspace"
 
@@ -16,16 +18,6 @@ import { git, isGitRepo, project, projectDir, VENV, WORKSPACES, writeFile } from
  * The build pipeline. AI steps write real files; deterministic steps run real tools.
  * A service is only reported as running when its tests pass and its process answers /health.
  */
-
-export type BuildEvent =
-  | { t: "step"; id: string; status: "active" | "done" | "failed" | "skipped"; note?: string }
-  | { t: "delta"; id: string; channel: "reasoning" | "content"; text: string }
-  | { t: "log"; id: string; text: string }
-  | { t: "file"; id: string; path: string }
-  | { t: "tests"; results: { name: string; status: "pass" | "fail" }[] }
-  | { t: "url"; url: string; routes: string[] }
-  | { t: "done"; ok: boolean; commit?: string }
-  | { t: "error"; message: string }
 
 const running = new Map<string, ChildProcess>()
 const urls = new Map<string, string>()
@@ -469,31 +461,6 @@ export function cleanEnv(): NodeJS.ProcessEnv {
   return env
 }
 
-/**
- * Split model output on "=== FILE: path ===" headers. END markers are optional (models drop them);
- * if the response was truncated, the last block is incomplete and is discarded.
- */
-export function parseFiles(text: string, truncated = false) {
-  const headers = [...text.matchAll(/^=== FILE: (.+?) ===\s*$/gm)]
-  const out: { path: string; content: string }[] = []
-  headers.forEach((h, i) => {
-    const start = h.index! + h[0].length
-    const end = i + 1 < headers.length ? headers[i + 1].index! : text.length
-    const raw = text.slice(start, end)
-    const hasEnd = /^=== END FILE ===\s*$/m.test(raw)
-    if (truncated && i === headers.length - 1 && !hasEnd) return
-    let content = raw
-      .replace(/^=== END FILE ===[\s\S]*$/m, "")
-      .replace(/^\r?\n/, "")
-      .replace(/^```[\w-]*\n/, "")
-      .replace(/\n```\s*$/, "")
-      .trimEnd()
-    content += "\n"
-    const p = h[1].trim().replace(/^`|`$/g, "")
-    if (!p.includes("..") && content.trim()) out.push({ path: p, content })
-  })
-  return out
-}
 
 function parseTests(output: string) {
   const results: { name: string; status: "pass" | "fail" }[] = []
@@ -586,54 +553,9 @@ const STDLIB = new Set(
   "__future__ abc argparse array ast asyncio base64 binascii bisect builtins calendar cmath collections concurrent contextlib contextvars copy csv ctypes dataclasses datetime decimal difflib email enum errno fnmatch fractions functools gc getpass glob gzip hashlib heapq hmac html http importlib inspect io ipaddress itertools json logging math mimetypes multiprocessing numbers operator os pathlib pickle platform pprint queue random re secrets select shlex shutil signal smtplib socket sqlite3 ssl stat statistics string struct subprocess sys tempfile textwrap threading time timeit traceback types typing unicodedata unittest urllib uuid warnings weakref xml zipfile zlib zoneinfo".split(" "),
 )
 
-const CORE_FILES = /^(db|models|main|router|schemas)\.py$/
 
-/**
- * Keep prompts inside the free-tier token budget: core modules in full, everything else
- * reduced to its public surface (imports, signatures, top-level names).
- */
-function contextFiles(files: Record<string, string>, failure = "", repairing = false) {
-  const out: Record<string, string> = {}
-  const code = Object.entries(files).filter(([p]) => p.endsWith(".py"))
-  if (!repairing) {
-    for (const [p, c] of code) out[p] = CORE_FILES.test(p) || failure.includes(path.basename(p)) ? c : surface(c)
-    return out
-  }
-  // Repairs can only edit what they can see verbatim: fill a character budget with full files by priority.
-  const rank = ([p]: [string, string]) =>
-    (failure.includes(path.basename(p)) ? 0 : 10) + (p.startsWith("tests/conftest") ? 1 : p.startsWith("tests/") ? 2 : /^(router|db)\.py$/.test(p) ? 3 : /^models\.py$/.test(p) ? 4 : 6)
-  let budget = 14_000
-  for (const [p, c] of [...code].sort((a, b) => rank(a) - rank(b))) {
-    if (c.length <= budget) {
-      out[p] = c
-      budget -= c.length
-    } else out[`${p} (SIGNATURES ONLY — do not edit)`] = surface(c)
-  }
-  return out
-}
 
-function surface(code: string) {
-  return code
-    .split("\n")
-    .filter((l) => /^(from |import |class |def |async def |@|[A-Z_][A-Z0-9_]* ?=|    def |    async def )/.test(l))
-    .join("\n")
-}
 
-function openapiFor(spec: ServiceSpec) {
-  const lines = ["openapi: 3.1.0", "info:", `  title: ${spec.name}`, "  version: 0.1.0", `  description: "${spec.purpose.replace(/"/g, "'")}"`, "paths:"]
-  const byPath = new Map<string, typeof spec.api.endpoints>()
-  for (const e of spec.api.endpoints) byPath.set(e.path, [...(byPath.get(e.path) ?? []), e])
-  for (const [p, eps] of byPath) {
-    lines.push(`  ${p}:`)
-    for (const e of eps) {
-      lines.push(`    ${e.method.toLowerCase()}:`, `      summary: "${e.summary.replace(/"/g, "'")}"`, `      x-kivo-requirement: ${e.requirement}`)
-      if (e.auth) lines.push("      security: [{ bearer: [] }]")
-      lines.push("      responses:", '        "200": { description: OK }')
-    }
-  }
-  lines.push("components:", "  securitySchemes:", "    bearer: { type: http, scheme: bearer, bearerFormat: JWT }")
-  return lines.join("\n") + "\n"
-}
 
 const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")
 
@@ -649,30 +571,5 @@ function compactFailure(output: string) {
     .slice(-3500)
 }
 
-export function parseEdits(text: string) {
-  const out: { path: string; search: string; replace: string }[] = []
-  const blocks = text.split(/^=== EDIT: (.+?) ===\s*$/m)
-  for (let i = 1; i < blocks.length; i += 2) {
-    const p = blocks[i].trim()
-    for (const m of blocks[i + 1].matchAll(/<<<<<<< SEARCH\r?\n([\s\S]*?)\r?\n=======\r?\n([\s\S]*?)\r?\n?>>>>>>> REPLACE/g)) {
-      out.push({ path: p, search: m[1], replace: m[2] })
-    }
-  }
-  return out
-}
 
-/** Exact match first, then a whitespace-tolerant line match (models often drift on indentation of blank lines). */
-export function applyEdit(content: string, search: string, replace: string): string | null {
-  // A function replacement, so "$&", "$'" etc. in code (regexes!) are inserted literally.
-  if (content.includes(search)) return content.replace(search, () => replace)
-  const norm = (l: string) => l.trimEnd()
-  const lines = content.split("\n")
-  const target = search.split("\n").map(norm)
-  while (target.length && !target[target.length - 1]) target.pop()
-  for (let i = 0; i + target.length <= lines.length; i++) {
-    if (target.every((t, j) => norm(lines[i + j]) === t)) {
-      return [...lines.slice(0, i), ...replace.split("\n"), ...lines.slice(i + target.length)].join("\n")
-    }
-  }
-  return null
-}
+export { applyEdit, parseEdits, parseFiles, type BuildEvent }

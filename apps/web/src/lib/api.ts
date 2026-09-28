@@ -1,4 +1,5 @@
-/** Client for the local Kivo daemon (proxied by Vite at /api and /ws). */
+/** Client for Kivo's API: the local daemon (proxied by Vite at /api and /ws), or the in-page browser backend (see transport.ts). */
+import { apiFetch, openEvents } from "./transport"
 
 export interface ProviderInfo {
   id: string
@@ -39,17 +40,19 @@ export interface Health {
   providers: ProviderInfo[]
   /** Per-language build readiness on this machine (only languages Kivo can build). */
   toolchains?: Record<string, { language: string; ok: boolean; version?: string; message?: string }>
+  /** "browser" when answered by the in-page backend (the hosted app), absent from the daemon. */
+  mode?: "browser"
 }
 
 async function post<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+  const res = await apiFetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
   return data as T
 }
 
 async function get<T>(url: string): Promise<T> {
-  const res = await fetch(url)
+  const res = await apiFetch(url)
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `${res.status} ${url}`)
   return res.json()
 }
@@ -61,7 +64,7 @@ export const api = {
   openProject: (path: string) => post<{ project: ProjectInfo }>("/api/projects/open", { path }),
   switchProject: (id: string) => post<{ project: ProjectInfo }>("/api/projects/switch", { id }),
   forgetProject: async (id: string) => {
-    const res = await fetch(`/api/projects?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/projects?id=${encodeURIComponent(id)}`, { method: "DELETE" })
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`)
   },
   /** Native folder picker (macOS). Resolves null when the user cancels. */
@@ -70,13 +73,17 @@ export const api = {
   tree: () => get<{ files: string[] }>("/api/fs/tree"),
   read: (path: string) => get<{ content: string }>(`/api/fs/read?path=${encodeURIComponent(path)}`),
   write: async (path: string, content: string) => {
-    const res = await fetch("/api/fs/write", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, content }) })
+    const res = await apiFetch("/api/fs/write", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, content }) })
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `Couldn't save ${path} (HTTP ${res.status})`)
   },
   gitLog: () => get<{ log: string }>("/api/git/log"),
   providers: () => get<Omit<Health, "ai" | "project">>("/api/providers"),
+  /** Browser mode only: put the demo project back to how it shipped. */
+  resetDemo: () => post<{ ok: true }>("/api/projects/reset-demo", {}),
+  /** Browser mode only: save (or with "" remove) the user's own Groq key, stored in this browser. */
+  setGroqKey: (key: string) => post<Omit<Health, "ai" | "project">>("/api/settings/key", { key }),
   setProvider: async (id: string) => {
-    const res = await fetch("/api/providers/active", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })
+    const res = await apiFetch("/api/providers/active", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
     return data as Omit<Health, "ai" | "project">
@@ -89,7 +96,7 @@ export const api = {
  * failed stream for an empty answer.
  */
 export async function sse<E>(url: string, body: unknown, onEvent: (e: E) => void, signal?: AbortSignal) {
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal })
+  const res = await apiFetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal })
   if (!res.ok || !res.body) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`)
   const reader = res.body.getReader()
   const dec = new TextDecoder()
@@ -126,21 +133,21 @@ export async function sse<E>(url: string, body: unknown, onEvent: (e: E) => void
  * since events sent while it was down are lost.
  */
 export function subscribe(onEvent: (e: { t: string; [k: string]: unknown }) => void, onReconnect?: () => void) {
-  const es = new EventSource("/api/events")
   let dropped = false
-  es.onerror = () => {
-    dropped = true
-  }
-  es.onopen = () => {
-    if (dropped) onReconnect?.()
-    dropped = false
-  }
-  es.onmessage = (m) => {
-    try {
-      onEvent(JSON.parse(m.data))
-    } catch {
-      // one malformed frame shouldn't break the live log stream
-    }
-  }
-  return () => es.close()
+  return openEvents({
+    error: () => {
+      dropped = true
+    },
+    open: () => {
+      if (dropped) onReconnect?.()
+      dropped = false
+    },
+    message: (data) => {
+      try {
+        onEvent(JSON.parse(data))
+      } catch {
+        // one malformed frame shouldn't break the live log stream
+      }
+    },
+  })
 }

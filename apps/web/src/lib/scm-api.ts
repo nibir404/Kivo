@@ -1,5 +1,6 @@
 /** Client for the daemon's source-control routes (/api/scm/*). Types mirror server/scm.ts. */
 import { sse } from "./api"
+import { apiFetch } from "./transport"
 
 export interface FileChange {
   path: string
@@ -65,7 +66,7 @@ export interface CommitDetail extends Commit {
 export type RemoteOp = "fetch" | "pull" | "push" | "sync"
 
 async function request<T>(method: "GET" | "POST", route: string, body?: unknown): Promise<T> {
-  const res = await fetch(`/api/scm/${route}`, method === "POST" ? { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) } : undefined)
+  const res = await apiFetch(`/api/scm/${route}`, method === "POST" ? { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) } : undefined)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error ?? `Source control request failed (HTTP ${res.status})`)
   return data as T

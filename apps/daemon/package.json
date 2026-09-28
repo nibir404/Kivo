@@ -11,7 +11,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@kivo/ai": "*",
     "@kivo/core": "*",
+    "@kivo/seed-project": "*",
     "node-pty": "^1.1.0",
     "tsx": "^4.23.15",
     "ws": "^8.22.0"

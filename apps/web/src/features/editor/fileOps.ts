@@ -6,6 +6,7 @@ import { openFile } from "@/state/runners"
 import { useKivo } from "@/state/store"
 import { useEditor } from "./store"
 import { closeUnder, refreshTree, renameOpen } from "./tabs"
+import { inBrowser } from "@/lib/transport"
 
 /** Explorer actions: each talks to the daemon, then brings the tree and the open tabs up to date. */
 
@@ -65,7 +66,7 @@ export async function trash(path: string) {
   closeUnder(path)
   if (useEditor.getState().selected === path) useEditor.getState().select(null)
   await refreshTree()
-  toast.success(`Moved ${baseName(path)} to the Trash`)
+  toast.success(inBrowser ? `Deleted ${baseName(path)}` : `Moved ${baseName(path)} to the Trash`)
 }
 
 export const reveal = (path: string) => editorApi.reveal(path || ".").catch(fail("Couldn't show it in Finder"))

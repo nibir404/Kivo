@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useTheme } from "next-themes"
-import { ChevronsUpDown, Folder, FolderGit2, FolderOpen, FolderTree, GitBranch, Keyboard, Library, X, Monitor, Moon, Network, PanelLeft, PanelRight, RefreshCw, Search, Settings, Sparkles, SquareTerminal, Sun } from "lucide-react"
+import { ChevronsUpDown, Folder, FolderGit2, FolderOpen, FolderTree, GitBranch, Keyboard, Library, X, Monitor, Moon, Network, PanelLeft, PanelRight, RefreshCw, RotateCcw, Search, Settings, Sparkles, SquareTerminal, Sun } from "lucide-react"
 import { toast } from "sonner"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -23,7 +23,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { Level, Mode } from "@kivo/core/types"
 import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
-import { refreshFiles, switchToProject } from "@/state/runners"
+import { inBrowser } from "@/lib/transport"
+import { refreshFiles, reloadCurrentProject, switchToProject } from "@/state/runners"
 import { useKivo } from "@/state/store"
 import { workspace } from "@/features/workspace/registry"
 import { useUi } from "./capture"
@@ -166,7 +167,7 @@ function ProjectMenu() {
           <DropdownMenuShortcut>⌘O</DropdownMenuShortcut>
         </DropdownMenuItem>
         <DropdownMenuItem disabled={!daemon} onSelect={() => setProjectDialog("clone")}>
-          <GitBranch /> Clone repository…
+          <GitBranch /> {inBrowser ? "Import from GitHub…" : "Clone repository…"}
         </DropdownMenuItem>
         {others.length > 0 && (
           <>
@@ -208,9 +209,25 @@ function ProjectMenu() {
         <DropdownMenuItem onSelect={() => setMode("code")}>
           <FolderTree /> Browse files
         </DropdownMenuItem>
-        <DropdownMenuItem disabled={!daemon} onSelect={() => runInTerminal("git status")}>
-          <SquareTerminal /> Git status in terminal
-        </DropdownMenuItem>
+        {inBrowser ? (
+          projectInfo?.kind === "demo" && (
+            <DropdownMenuItem
+              onSelect={() =>
+                api
+                  .resetDemo()
+                  .then(() => reloadCurrentProject())
+                  .then(() => toast.success("Demo project reset"))
+                  .catch((err) => toast.error(String(err.message)))
+              }
+            >
+              <RotateCcw /> Reset demo project
+            </DropdownMenuItem>
+          )
+        ) : (
+          <DropdownMenuItem disabled={!daemon} onSelect={() => runInTerminal("git status")}>
+            <SquareTerminal /> Git status in terminal
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem
           disabled={!daemon}
           onSelect={() =>

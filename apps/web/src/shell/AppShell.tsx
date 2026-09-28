@@ -119,7 +119,8 @@ function useBuildNotice() {
       s.openService(b.specId)
     }
     if (!b.real) toast(`${name} simulated`, { description: "Offline simulation — connect the daemon for a real build.", action: { label: "Open", onClick: open } })
-    else if (b.ok) toast.success(`${name} is ready`, { description: [summary, b.url ? "running locally" : undefined].filter(Boolean).join(" · "), action: { label: "Open", onClick: open }, duration: 8000 })
+    else if (b.ok && !b.url) toast.success(`${name}: code written`, { description: "Not installed, tested or started — that needs Kivo on your computer", action: { label: "Open", onClick: open }, duration: 8000 })
+    else if (b.ok) toast.success(`${name} is ready`, { description: [summary, "running locally"].filter(Boolean).join(" · "), action: { label: "Open", onClick: open }, duration: 8000 })
     else
       toast.warning(`${name} finished with issues`, {
         description: summary ?? b.error ?? "Some steps need attention.",

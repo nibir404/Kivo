@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { CaptureScope } from "@/shell/capture"
 import { SectionLabel } from "@/shell/bits"
+import { apiFetch } from "@/lib/transport"
 
 /**
  * In-app API client for services Kivo is running. Endpoints and example bodies come from the
@@ -33,7 +34,7 @@ interface Result {
 type Schema = { $ref?: string; type?: string; format?: string; properties?: Record<string, Schema>; items?: Schema; anyOf?: Schema[]; allOf?: Schema[]; enum?: unknown[]; default?: unknown; example?: unknown }
 
 async function proxy(service: string, method: string, path: string, body?: string, token?: string): Promise<Result> {
-  const res = await fetch("/api/proxy", {
+  const res = await apiFetch("/api/proxy", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ service, method, path, body, headers: token ? { Authorization: `Bearer ${token}` } : {} }),

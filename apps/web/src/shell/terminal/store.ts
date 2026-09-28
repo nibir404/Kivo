@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import { apiFetch } from "@/lib/transport"
 
 /**
  * Terminal tabs. Each tab names a daemon-side session that outlives the page, so the ids are kept
@@ -107,7 +108,7 @@ export const useTerminals = create<TerminalsState>((set, get) => {
       if (saved.tabs.length) return commit(saved.tabs, saved.active)
       // New browser tab: pick up shells that are running but not shown anywhere.
       try {
-        const res = await fetch("/api/terminals")
+        const res = await apiFetch("/api/terminals")
         if (res.ok) {
           const { terminals } = (await res.json()) as { terminals: { id: string; title: string; attached: boolean; exited: boolean }[] }
           const orphans = terminals.filter((t) => !t.attached && !t.exited)
@@ -127,7 +128,7 @@ export const useTerminals = create<TerminalsState>((set, get) => {
 
     closeTab(id) {
       handles.delete(id)
-      fetch(`/api/terminals?id=${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {})
+      apiFetch(`/api/terminals?id=${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {})
       const tabs = get().tabs
       const i = tabs.findIndex((t) => t.id === id)
       const rest = tabs.filter((t) => t.id !== id)
@@ -137,7 +138,7 @@ export const useTerminals = create<TerminalsState>((set, get) => {
 
     restart(id) {
       // Same slot in the tab strip, a brand-new shell behind it.
-      fetch(`/api/terminals?id=${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {})
+      apiFetch(`/api/terminals?id=${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {})
       handles.delete(id)
       const fresh = newId()
       const tabs = get().tabs.map((t) => (t.id === id ? { id: fresh, title: "shell", status: "connecting" as const, cwd: t.cwd } : t))

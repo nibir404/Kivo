@@ -304,13 +304,16 @@ function ResultCard({ spec, build, runs, elapsed, onTab }: { spec: ServiceSpec; 
   /** Test names are test_<requirement_id>; show the feature people asked for, not the function name. */
   const featureFor = (test: string) => spec.requirements.find((r) => test.includes(r.id))?.title ?? test
 
-  const tone = !build.real ? "preview" : build.ok ? "ok" : "fail"
-  const title = tone === "preview" ? `${spec.name} is ready to explore` : tone === "ok" ? `${spec.name} is live` : `${spec.name} needs a little help`
+  // "written": the code was generated but never installed, tested or started (a build in the browser).
+  const tone = !build.real ? "preview" : build.ok ? (build.url ? "ok" : "written") : "fail"
+  const title = tone === "preview" ? `${spec.name} is ready to explore` : tone === "ok" ? `${spec.name} is live` : tone === "written" ? `${spec.name}: code written` : `${spec.name} needs a little help`
   const body =
     tone === "preview"
       ? "This was a preview: Kivo walked through the full plan without writing real code. Connect an AI provider in .env to build it for real."
       : tone === "ok"
         ? `${tests.length ? `All ${tests.length} features passed their checks` : "Every check passed"}, and it's running on your computer. Built in ${formatDuration(elapsed)}.`
+        : tone === "written"
+          ? `Kivo wrote ${spec.files.length} files into services/${spec.id}/ in ${formatDuration(elapsed)}. Nothing has been installed, tested or started yet: in the browser Kivo can't run code. Open this project with Kivo on your computer (npm run dev) to test and run it.`
         : failing.length
           ? `${passed} of ${tests.length} features passed their checks.${build.url ? " It's running anyway, so you can look around." : ""}`
           : failedStep
@@ -325,10 +328,10 @@ function ResultCard({ spec, build, runs, elapsed, onTab }: { spec: ServiceSpec; 
             "flex size-10 shrink-0 items-center justify-center rounded-full",
             tone === "ok" && "bg-success/15 text-success",
             tone === "fail" && "bg-destructive/10 text-destructive",
-            tone === "preview" && "bg-muted text-foreground",
+            (tone === "preview" || tone === "written") && "bg-muted text-foreground",
           )}
         >
-          {tone === "fail" ? <AlertTriangle className="size-5" /> : tone === "preview" ? <Eye className="size-5" /> : <Check className="size-5" strokeWidth={2.5} />}
+          {tone === "fail" ? <AlertTriangle className="size-5" /> : tone === "preview" ? <Eye className="size-5" /> : tone === "written" ? <FileCode2 className="size-5" /> : <Check className="size-5" strokeWidth={2.5} />}
         </div>
         <div className="min-w-0 flex-1 space-y-1.5">
           <div className="text-[19px] leading-snug font-semibold tracking-tight">{title}</div>
@@ -364,6 +367,18 @@ function ResultCard({ spec, build, runs, elapsed, onTab }: { spec: ServiceSpec; 
             </Button>
             <Button size="sm" variant="outline" onClick={() => openService(null)}>
               <ArrowLeft /> Build something else
+            </Button>
+          </>
+        )}
+        {tone === "written" && (
+          <>
+            {main && (
+              <Button size="sm" onClick={() => openFile(main)}>
+                <Code2 /> See the code
+              </Button>
+            )}
+            <Button size="sm" variant="outline" onClick={() => rebuild(spec.id)}>
+              <RotateCw /> Rebuild
             </Button>
           </>
         )}

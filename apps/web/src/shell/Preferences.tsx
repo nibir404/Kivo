@@ -1,16 +1,18 @@
 import type { ReactNode } from "react"
 import { useTheme } from "next-themes"
-import { ArrowRight, Code2, Compass, FolderOpen, Monitor, Moon, Network, RefreshCw, Sparkles, Sun } from "lucide-react"
+import { ArrowRight, Code2, Compass, FolderOpen, KeyRound, Monitor, Moon, Network, RefreshCw, Sparkles, Sun } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Kbd } from "@/components/ui/kbd"
 import { Switch } from "@/components/ui/switch"
 import type { Level } from "@kivo/core/types"
+import { inBrowser } from "@/lib/transport"
 import { cn } from "@/lib/utils"
 import { refreshProviders, switchProvider } from "@/state/runners"
 import { useKivo } from "@/state/store"
 import { useUi } from "./capture"
+import { GroqKeyForm } from "./GroqKey"
 import { KivoMark, LEVELS } from "./TopBar"
 
 export function PreferenceDialogs() {
@@ -55,10 +57,13 @@ function WelcomeDialog() {
     close()
     fn()
   }
+  const [keyOpen, setKeyOpen] = useState(false)
   const paths = [
     ...(daemon
       ? [
-          { icon: FolderOpen, title: "Open your project", body: "A folder on this Mac, or clone one from GitHub. The editor, terminal and git all work on it.", go: () => useUi.getState().setProjectDialog("open") },
+          inBrowser
+            ? { icon: FolderOpen, title: "Open your project", body: "A folder on your computer (Chrome or Edge), or a public GitHub repository. Kivo edits the files in place.", go: () => useUi.getState().setProjectDialog("open") }
+            : { icon: FolderOpen, title: "Open your project", body: "A folder on this Mac, or clone one from GitHub. The editor, terminal and git all work on it.", go: () => useUi.getState().setProjectDialog("open") },
         ]
       : []),
     { icon: Sparkles, title: "Build a service", body: "Describe it in plain words. You review the plan before anything is generated.", go: startNewService },
@@ -69,7 +74,7 @@ function WelcomeDialog() {
   return (
     <Dialog open={open} onOpenChange={(v) => !v && close()}>
       {/* Focus goes wherever the chosen path puts it, not back to where the dialog opened from. */}
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-xl" onCloseAutoFocus={(e) => e.preventDefault()}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] gap-0 overflow-y-auto p-0 sm:max-w-xl" onCloseAutoFocus={(e) => e.preventDefault()}>
         <div className="space-y-2 border-b px-6 pt-6 pb-5">
           <KivoMark className="size-8" />
           <DialogHeader className="gap-1 pt-2">
@@ -79,6 +84,23 @@ function WelcomeDialog() {
         </div>
 
         <div className="space-y-5 px-6 py-5">
+          {inBrowser && !ai?.ai && (
+            <div className="space-y-2 rounded-xl border p-3">
+              <div className="flex items-center gap-2 text-[13px] font-medium">
+                <KeyRound className="size-4" /> Connect AI with your Groq key
+              </div>
+              {keyOpen ? (
+                <GroqKeyForm autoFocus />
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">Planning, Ask, inline edits, autocomplete and the agent call Groq directly from this page. The key stays in this browser.</p>
+                  <Button size="sm" variant="outline" onClick={() => setKeyOpen(true)}>
+                    Add key
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
           <div className="space-y-2">
             <div className="text-[13px] font-medium">How should Kivo explain things to you?</div>
             <LevelPicker value={level} onChange={setLevel} />
@@ -107,7 +129,13 @@ function WelcomeDialog() {
         <div className="flex items-center gap-2 border-t bg-muted/30 px-6 py-3 text-xs text-muted-foreground">
           <span className={cn("size-1.5 rounded-full", ai?.ai ? "bg-success" : daemon ? "bg-warning" : "bg-muted-foreground/40")} />
           <span className="min-w-0 flex-1 truncate">
-            {ai?.ai ? `AI ready · ${ai.providers.find((p) => p.id === ai.active)?.label} · ${ai.model.split("/").pop()}` : daemon ? "No AI provider connected — Kivo uses offline templates" : "Daemon offline — Kivo works in simulation until it connects"}
+            {ai?.ai
+              ? `AI ready · ${ai.providers.find((p) => p.id === ai.active)?.label} · ${ai.model.split("/").pop()}`
+              : inBrowser
+                ? "Running in your browser — add a Groq key to turn on AI"
+                : daemon
+                  ? "No AI provider connected — Kivo uses offline templates"
+                  : "Daemon offline — Kivo works in simulation until it connects"}
           </span>
           <Button variant="ghost" size="sm" onClick={close}>
             <Compass /> Just look around
@@ -206,49 +234,55 @@ function SettingsDialog() {
             <LevelPicker value={k.level} onChange={k.setLevel} />
           </Section>
 
-          <Section title="AI provider" description="Which model service Kivo uses. Keys stay in .env on your machine.">
-            {!k.ai?.providers?.length && <p className="text-xs text-muted-foreground">{k.daemon ? "No providers reported." : "Connect the Kivo daemon to use AI."}</p>}
-            <div className="space-y-1.5">
-              {k.ai?.providers?.map((p) => {
-                const usable = p.configured && p.status !== "unauthorized" && p.status !== "unreachable"
-                const active = p.id === k.ai?.active
-                return (
-                  <div key={p.id} className="flex items-center gap-3 rounded-lg border px-3 py-2">
-                    <span className={cn("size-2 shrink-0 rounded-full", DOT[p.status])} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 text-[13px]">
-                        <span className="font-medium">{p.label}</span>
-                        <span className="text-[11px] text-muted-foreground">{STATUS[p.status]}</span>
+          {inBrowser ? (
+            <Section title="AI" description="Kivo is running in your browser and calls Groq directly from this page with your own key.">
+              <GroqKeyForm />
+            </Section>
+          ) : (
+            <Section title="AI provider" description="Which model service Kivo uses. Keys stay in .env on your machine.">
+              {!k.ai?.providers?.length && <p className="text-xs text-muted-foreground">{k.daemon ? "No providers reported." : "Connect the Kivo daemon to use AI."}</p>}
+              <div className="space-y-1.5">
+                {k.ai?.providers?.map((p) => {
+                  const usable = p.configured && p.status !== "unauthorized" && p.status !== "unreachable"
+                  const active = p.id === k.ai?.active
+                  return (
+                    <div key={p.id} className="flex items-center gap-3 rounded-lg border px-3 py-2">
+                      <span className={cn("size-2 shrink-0 rounded-full", DOT[p.status])} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 text-[13px]">
+                          <span className="font-medium">{p.label}</span>
+                          <span className="text-[11px] text-muted-foreground">{STATUS[p.status]}</span>
+                        </div>
+                        <div className="truncate text-[11px] text-muted-foreground">{p.message ?? (p.models.length ? p.models.join(" → ") : "")}</div>
                       </div>
-                      <div className="truncate text-[11px] text-muted-foreground">{p.message ?? (p.models.length ? p.models.join(" → ") : "")}</div>
+                      {active ? (
+                        <span className="text-[11px] font-medium">In use</span>
+                      ) : usable ? (
+                        <Button size="xs" variant="outline" onClick={() => switchProvider(p.id)}>
+                          Use
+                        </Button>
+                      ) : (
+                        <span className="text-[11px] text-muted-foreground">{p.configured ? "Unavailable" : "Add key in .env"}</span>
+                      )}
                     </div>
-                    {active ? (
-                      <span className="text-[11px] font-medium">In use</span>
-                    ) : usable ? (
-                      <Button size="xs" variant="outline" onClick={() => switchProvider(p.id)}>
-                        Use
-                      </Button>
-                    ) : (
-                      <span className="text-[11px] text-muted-foreground">{p.configured ? "Unavailable" : "Add key in .env"}</span>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-            {k.daemon && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="-ml-2 text-muted-foreground"
-                onClick={async () => {
-                  setChecking(true)
-                  await refreshProviders().finally(() => setChecking(false))
-                }}
-              >
-                <RefreshCw className={cn(checking && "animate-spin")} /> Re-check connections
-              </Button>
-            )}
-          </Section>
+                  )
+                })}
+              </div>
+              {k.daemon && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="-ml-2 text-muted-foreground"
+                  onClick={async () => {
+                    setChecking(true)
+                    await refreshProviders().finally(() => setChecking(false))
+                  }}
+                >
+                  <RefreshCw className={cn(checking && "animate-spin")} /> Re-check connections
+                </Button>
+              )}
+            </Section>
+          )}
 
           <Section title="Workspace">
             <ToggleRow label="Focus mode for code" description="Fold the context panel away while you edit, and bring it back when you leave." checked={k.prefs.focusCode} onChange={(v) => k.setPref("focusCode", v)} />

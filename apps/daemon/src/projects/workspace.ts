@@ -4,7 +4,8 @@ import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
 import { analyzeRepository, type RepoFile } from "@kivo/core/detect"
-import { REPO_ROOT, SEED_PROJECT } from "../paths"
+import { SEED_DIR } from "@kivo/seed-project"
+import { REPO_ROOT } from "../paths"
 
 /**
  * Projects are real directories on disk: the built-in demo, any folder the user opens, or a
@@ -124,7 +125,7 @@ export async function ensureWorkspace() {
   load()
   if (!fs.existsSync(DEMO_DIR)) {
     fs.mkdirSync(WORKSPACES, { recursive: true })
-    fs.cpSync(SEED_PROJECT, DEMO_DIR, { recursive: true })
+    fs.cpSync(SEED_DIR, DEMO_DIR, { recursive: true })
     fs.writeFileSync(path.join(DEMO_DIR, ".gitignore"), ".venv/\n__pycache__/\n.pytest_cache/\n*.db\n.env\n")
   }
   // Checked separately from the directory, so a first run without git is repaired on the next start.

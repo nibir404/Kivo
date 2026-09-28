@@ -35,6 +35,7 @@ import { openFile } from "@/state/runners"
 import { useKivo } from "@/state/store"
 import { useConfirm } from "./confirm"
 import { openDiff, reloadOpenBuffers, STATUS_COLOR, STATUS_LABEL, useScm } from "./state"
+import { inBrowser } from "@/lib/transport"
 
 const POLL_MS = 3000
 
@@ -65,6 +66,16 @@ function useLiveStatus() {
 
 /** Source Control view for the Code-mode sidebar. */
 export function ScmPanel() {
+  if (inBrowser)
+    return (
+      <Empty title="Source control needs Kivo on your computer">
+        Kivo is running in your browser, which can't run git. Run it locally (<code className="font-mono">npm run dev</code>) to stage, commit, diff, branch and push.
+      </Empty>
+    )
+  return <DaemonScmPanel />
+}
+
+function DaemonScmPanel() {
   useLiveStatus()
   const { status, error, refresh } = useScm()
   const daemon = useKivo((s) => s.daemon)
