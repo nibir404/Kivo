@@ -4,6 +4,7 @@ import { WebSocketServer } from "ws"
 import type { ServiceSpec } from "@kivo/core/types"
 import { aiAvailable, checkAll, currentModel, describe, parseJsonLoose, setActive, stream, type Msg } from "./ai/ai"
 import { bus } from "./events/bus"
+import { keyEditable, loadSavedKey, setGroqKey } from "./ai/settings"
 import { HttpError, json, readJson, requireObject, requireString, sse } from "./http/http"
 import { isBuilding, runBuild, serviceUrl, stopAll, type BuildEvent } from "./build/pipeline"
 import { chatSystem, EDIT_SYSTEM, editUser, INTENT_SYSTEM, intentUser } from "@kivo/ai/prompts"
@@ -43,6 +44,7 @@ process.on("unhandledRejection", (err) => console.error("[kivo] unhandled reject
 process.on("uncaughtException", (err) => console.error("[kivo] uncaught exception:", err))
 
 await ensureWorkspace()
+loadSavedKey()
 await checkAll()
 
 /** Editor language note for inline edits, from the file being edited rather than a fixed assumption. */
@@ -58,7 +60,7 @@ const server = http.createServer(async (req, res) => {
   if (!originOk(req)) return json(res, 403, { error: "origin not allowed" })
 
   try {
-    if (url.pathname === "/api/health") return json(res, 200, { ...describe(), ai: aiAvailable(), model: currentModel(), project: project().name, projectInfo: publicProject(project()), toolchains: await allToolchains() })
+    if (url.pathname === "/api/health") return json(res, 200, { ...describe(), keyEditable: keyEditable(), ai: aiAvailable(), model: currentModel(), project: project().name, projectInfo: publicProject(project()), toolchains: await allToolchains() })
 
     // Feature modules own their routes (projects, editor, source control, agent).
     for (const h of [handleProjects, handleEditor, handleScm, handleAgent]) if (await h(req, res, url)) return
@@ -68,6 +70,18 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/providers/active" && req.method === "POST") {
       const b = await readJson(req)
       return json(res, 200, setActive(requireString(b.id, "id", 40)))
+    }
+
+    if (url.pathname === "/api/settings/key" && req.method === "POST") {
+      // Only where there's no .env to edit (the desktop app); otherwise keys live in .env.
+      if (!keyEditable()) throw new HttpError(404, "Keys are set in .env on this computer")
+      const b = await readJson(req)
+      if (typeof b.key !== "string") throw new HttpError(400, '"key" must be a string')
+      try {
+        return json(res, 200, await setGroqKey(b.key))
+      } catch (err) {
+        throw new HttpError(400, (err as Error).message)
+      }
     }
 
     if (url.pathname === "/api/project") return json(res, 200, analyze())

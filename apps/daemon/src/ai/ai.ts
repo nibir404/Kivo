@@ -43,6 +43,8 @@ export const PROVIDERS: ProviderConfig[] = [
   },
 ]
 
-configure(PROVIDERS, { active: env.KIVO_PROVIDER ?? "groq", crossProvider: env.KIVO_CROSS_PROVIDER_FAILOVER !== "0" })
+export const AI_OPTIONS = { active: env.KIVO_PROVIDER ?? "groq", crossProvider: env.KIVO_CROSS_PROVIDER_FAILOVER !== "0" }
+
+configure(PROVIDERS, AI_OPTIONS)
 
 export * from "@kivo/ai/client"

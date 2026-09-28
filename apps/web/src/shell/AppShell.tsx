@@ -8,6 +8,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { BuildView } from "@/features/build/BuildView"
 import { workspace } from "@/features/workspace/registry"
+import { daemonMissing, inBrowser, inDesktop, watchForDaemon } from "@/lib/transport"
 import { cn } from "@/lib/utils"
 import { init, openFile } from "@/state/runners"
 import { useKivo } from "@/state/store"
@@ -22,6 +23,8 @@ import { FloatingCaptureToolbar, useDismissCapture, useUi } from "./capture"
 import { PreferenceDialogs } from "./Preferences"
 import { ProjectDialogs } from "./projects/ProjectDialogs"
 import { useWidthTier } from "./useCompact"
+import { Tour } from "./tour/Tour"
+import { startTour } from "./tour/store"
 
 // The editor (CodeMirror) and graph views (React Flow) are heavy; load them the first time they're opened.
 const CodeView = lazy(() => import("@/features/code/CodeView").then((m) => ({ default: m.CodeView })))
@@ -137,6 +140,18 @@ export function AppShell() {
   useEffect(() => {
     init()
   }, [])
+  // Running in the browser only because no daemon answered at startup: offer the full system once one does.
+  useEffect(
+    () =>
+      watchForDaemon(() =>
+        toast("Kivo is running on this computer", {
+          description: "Switch to it for the terminal, git and real builds on your files.",
+          action: { label: "Switch", onClick: () => location.reload() },
+          duration: Infinity,
+        }),
+      ),
+    [],
+  )
   const tier = useWidthTier()
   const compact = tier === "compact"
   const mode = useKivo((s) => s.mode)
@@ -147,6 +162,7 @@ export function AppShell() {
   const bottomOpenTick = useUi((s) => s.bottomOpenTick)
   const focusCode = useKivo((s) => s.prefs.focusCode)
   const welcomed = useKivo((s) => s.welcomed)
+  const toured = useKivo((s) => s.toured)
   const resetLayoutTick = useUi((s) => s.resetLayoutTick)
   // Panel sizes are the user's: remember them across sessions (only changes the user made by hand).
   const outer = useDefaultLayout({ id: "kivo-shell-v", storage: localStorage, onlySaveAfterUserInteractions: true })
@@ -193,10 +209,11 @@ export function AppShell() {
     }
   }, [bottomMax])
 
-  // First visit: a calm workspace (terminal folded away) and a short welcome.
+  // First visit: a calm workspace (terminal folded away), a one-minute tour of what Kivo is, then setup.
   useEffect(() => {
     if (!outer.defaultLayout) bottom.current?.collapse()
-    if (!welcomed) setTimeout(() => useKivo.getState().setDialog("welcome"), 400)
+    if (!toured) setTimeout(startTour, 500)
+    else if (!welcomed) setTimeout(() => useKivo.getState().setDialog("welcome"), 400)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -233,7 +250,7 @@ export function AppShell() {
   }, [mode, compact, focusCode])
 
   const main = (
-    <main key={mode} className="kivo-fade h-full min-w-0 overflow-hidden">
+    <main key={mode} data-tour="main" className="kivo-fade h-full min-w-0 overflow-hidden">
       <ErrorBoundary resetKey={mode}>
         <Suspense
           fallback={
@@ -308,6 +325,7 @@ export function AppShell() {
       <PreferenceDialogs />
       <FloatingCaptureToolbar />
       <ProjectDialogs />
+      <Tour />
     </div>
   )
 }
@@ -327,10 +345,18 @@ function StatusBar({ toggle, compact }: { toggle: (p: "left" | "right" | "bottom
         <TooltipTrigger asChild>
           <span className={item}>
             <span className={cn("size-1.5 rounded-full", daemon ? "bg-success" : "kivo-pulse bg-warning")} />
-            {daemon ? "Connected" : "Connecting…"}
+            {!daemon ? "Connecting…" : inBrowser ? "In your browser" : inDesktop ? "Desktop" : "Connected"}
           </span>
         </TooltipTrigger>
-        <TooltipContent>{daemon ? "Local Kivo daemon is running — builds, files and the terminal are real." : "Waiting for the Kivo daemon (npm run dev). Everything works offline in simulation meanwhile."}</TooltipContent>
+        <TooltipContent className="max-w-72">
+          {!daemon
+            ? "Waiting for the Kivo daemon (npm run dev). Everything works offline in simulation meanwhile."
+            : inBrowser
+              ? daemonMissing
+                ? "Kivo isn't running on this computer, so it runs in this browser: editing, AI and code generation work; the terminal, git and running services need the desktop app or npm run dev."
+                : "Running in your browser: editing, AI and code generation work; the terminal, git and running services need the desktop app."
+              : "Kivo is running on this computer — builds, files and the terminal are real."}
+        </TooltipContent>
       </Tooltip>
 
       {building ? (

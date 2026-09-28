@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { AtSign, Box, Braces, FileCode2, Hash, Heading, KeyRound, SquareFunction, Type, Variable } from "lucide-react"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -48,11 +48,26 @@ function Highlight({ text, hits, offset = 0 }: { text: string; hits: number[]; o
   )
 }
 
+type Pick = { sel: string; setSel: (v: string) => void }
+
+/**
+ * Keep a result highlighted, so Enter always opens something: when the highlighted item is gone
+ * (the query changed, or the file list arrived after the user typed), highlight the first one.
+ */
+function useKeepSelection(values: string[], { sel, setSel }: Pick) {
+  const key = values.join("\n")
+  useEffect(() => {
+    if (!values.includes(sel)) setSel(values[0] ?? "")
+  }, [key, sel]) // eslint-disable-line react-hooks/exhaustive-deps
+}
+
 export function Palette() {
   const mode = useEditor((s) => s.palette)
   const setPalette = useEditor((s) => s.setPalette)
   // Opening in a mode starts the input with that mode's prefix, like VS Code (remounted per mode).
   const [q, setQ] = useState(() => (mode ? PREFIX[mode] : ""))
+  const [sel, setSel] = useState("")
+  const pick = { sel, setSel }
 
   const current = q.startsWith(":") ? "line" : q.startsWith("@") ? "symbol" : "files"
   const close = () => setPalette(null)
@@ -64,12 +79,12 @@ export function Palette() {
         <DialogDescription>Type a file name, “:” and a line number, or “@” and a symbol.</DialogDescription>
       </DialogHeader>
       <DialogContent className="top-[12%] translate-y-0 overflow-hidden rounded-xl! p-0 sm:max-w-xl" showCloseButton={false}>
-        <Command shouldFilter={false} loop className="rounded-xl!">
+        <Command shouldFilter={false} loop value={sel} onValueChange={setSel} className="rounded-xl!">
           <CommandInput value={q} onValueChange={setQ} placeholder={current === "files" ? "Search files by name (append :line to jump)" : current === "line" ? "Line number, optionally :column" : "Symbol in this file"} />
           <CommandList className="max-h-[min(60vh,420px)]">
-            {current === "files" && <FileResults query={q} onDone={close} />}
-            {current === "line" && <LineResult query={q.slice(1)} onDone={close} />}
-            {current === "symbol" && <SymbolResults query={q.slice(1)} onDone={close} />}
+            {current === "files" && <FileResults query={q} onDone={close} pick={pick} />}
+            {current === "line" && <LineResult query={q.slice(1)} onDone={close} pick={pick} />}
+            {current === "symbol" && <SymbolResults query={q.slice(1)} onDone={close} pick={pick} />}
           </CommandList>
         </Command>
       </DialogContent>
@@ -77,7 +92,7 @@ export function Palette() {
   )
 }
 
-function FileResults({ query, onDone }: { query: string; onDone: () => void }) {
+function FileResults({ query, onDone, pick }: { query: string; onDone: () => void; pick: Pick }) {
   const files = useKivo((s) => s.files)
   const openFiles = useKivo((s) => s.openFiles)
   const recent = useEditor((s) => s.recent)
@@ -104,6 +119,8 @@ function FileResults({ query, onDone }: { query: string; onDone: () => void }) {
     scored.sort((a, b) => b.score - a.score || a.path.length - b.path.length)
     return { recent: [], rest: scored.slice(0, MAX) }
   }, [files, openFiles, recent, name])
+
+  useKeepSelection([...results.recent, ...results.rest].map((r) => r.path), pick)
 
   const go = (path: string) => {
     onDone()
@@ -141,8 +158,9 @@ function useActiveText() {
   return activeFile && !isDiffTab(activeFile) && text !== undefined ? { path: activeFile, text } : null
 }
 
-function LineResult({ query, onDone }: { query: string; onDone: () => void }) {
+function LineResult({ query, onDone, pick }: { query: string; onDone: () => void; pick: Pick }) {
   const active = useActiveText()
+  useKeepSelection(active ? ["goto-line"] : [], pick)
   if (!active) return <CommandEmpty>Open a file first</CommandEmpty>
   const total = active.text.split("\n").length
   const m = /^\s*(\d+)?(?:[:,](\d+))?\s*$/.exec(query)
@@ -166,17 +184,20 @@ function LineResult({ query, onDone }: { query: string; onDone: () => void }) {
   )
 }
 
-function SymbolResults({ query, onDone }: { query: string; onDone: () => void }) {
+function SymbolResults({ query, onDone, pick }: { query: string; onDone: () => void; pick: Pick }) {
   const active = useActiveText()
   const symbols = useMemo(() => (active ? symbolsOf(active.path, active.text) : []), [active?.path, active?.text]) // eslint-disable-line react-hooks/exhaustive-deps
-  if (!active) return <CommandEmpty>Open a file first</CommandEmpty>
-  const list = query.trim()
+  const list = !active
+    ? []
+    : query.trim()
     ? symbols
         .map((s) => ({ s, m: scoreText(query, s.name) }))
         .filter((x) => x.m)
         .sort((a, b) => b.m!.score - a.m!.score)
         .slice(0, MAX)
-    : symbols.slice(0, 400).map((s) => ({ s, m: null }))
+      : symbols.slice(0, 400).map((s) => ({ s, m: null }))
+  useKeepSelection(list.map(({ s }) => `${s.line}:${s.name}`), pick)
+  if (!active) return <CommandEmpty>Open a file first</CommandEmpty>
   if (!symbols.length) return <CommandEmpty>No symbols found in {baseName(active.path)}</CommandEmpty>
   return (
     <>

@@ -22,7 +22,7 @@ import { Journey, useTechnical } from "./journey"
 import { SectionLabel, StatusDot } from "@/shell/bits"
 import { Capturable, CaptureScope, useUi } from "@/shell/capture"
 import { focusWhenReady } from "@/shell/Preferences"
-import { inBrowser } from "@/lib/transport"
+import { inBrowser, keyInApp } from "@/lib/transport"
 
 export function BuildView() {
   const { draft, activeServiceId, understanding, discipline } = useKivo()
@@ -213,7 +213,7 @@ function IntentComposer() {
   const input = useRef<HTMLTextAreaElement>(null)
   return (
     <div className="space-y-3">
-      <div className="rounded-2xl border bg-background shadow-xs transition-shadow focus-within:border-foreground/30 focus-within:shadow-md">
+      <div data-tour="intent" className="rounded-2xl border bg-background shadow-xs transition-shadow focus-within:border-foreground/30 focus-within:shadow-md">
         <label htmlFor="intent-input" className="sr-only">
           Describe what you want to build
         </label>
@@ -237,7 +237,7 @@ function IntentComposer() {
             <Kbd>↵</Kbd> to continue · <Kbd>⇧↵</Kbd> new line
           </span>
           {!ai?.ai && (
-            <span title={inBrowser ? "No AI yet, so builds are simulated. Add your Groq key in Preferences to generate real code." : "No AI provider is connected, so builds are simulated. Add a key in .env to generate real code."} className="rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground">
+            <span title={keyInApp() ? "No AI yet, so builds are simulated. Add your Groq key in Preferences to generate real code." : "No AI provider is connected, so builds are simulated. Add a key in .env to generate real code."} className="rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground">
               Preview mode
             </span>
           )}

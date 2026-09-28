@@ -1,8 +1,11 @@
 import fs from "node:fs"
 import path from "node:path"
 
-/** Where the demo project's files live. The daemon copies this folder into its workspace on first run. */
-export const SEED_DIR = path.join(import.meta.dirname, "files")
+/**
+ * Where the demo project's files live. The daemon copies this folder into its workspace on first run.
+ * KIVO_SEED_DIR points elsewhere (the desktop app ships them as a resource).
+ */
+export const SEED_DIR = process.env.KIVO_SEED_DIR ? path.resolve(process.env.KIVO_SEED_DIR) : path.join(import.meta.dirname, "files")
 
 /** Every demo file as text, keyed by project-relative path (the web app bundles this for the in-browser demo). */
 export function readSeedFiles(dir = SEED_DIR): Record<string, string> {

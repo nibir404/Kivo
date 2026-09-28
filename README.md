@@ -48,15 +48,27 @@ npm test          # every workspace's tests (core, daemon, web)
 npm run typecheck # TypeScript across every workspace, tests included
 npm run lint      # oxlint over the whole repo
 npm run check     # typecheck + lint + tests (what CI runs, plus the build)
+npm run e2e       # Playwright: builds everything, then runs the end-to-end suites below
 ```
 
 Run one workspace with `-w`, e.g. `npm test -w @kivo/daemon` or `npm run dev -w @kivo/web`.
+
+**End-to-end tests (Playwright).** `npm run e2e:install` once (downloads Chromium), then `npm run e2e`. Four suites, one per way Kivo runs:
+
+| Project | What it drives |
+|---|---|
+| `api` | The daemon's HTTP API: health, Host/Origin guards, files, editor operations, search, key handling |
+| `daemon` | The UI served by the daemon: tour, editing and saving to disk, the real terminal, ⌘K |
+| `browser` | The hosted web app with no daemon: IndexedDB storage, key validation, Groq streaming (mocked, no real key), and falling back to the browser when no daemon answers on localhost |
+| `desktop` | The Electron app with its own daemon: title bar, key, terminal through node-pty, menu commands, links opening outside the app |
+
+The daemon under test uses a throwaway data folder (`e2e/.tmp/`) and no AI keys, so tests never touch your projects or spend tokens. Run one suite with `npx playwright test --project=browser`. To test a packaged app instead of the dev build: `E2E_DESKTOP_APP=apps/desktop/release/mac-arm64/Kivo.app/Contents/MacOS/Kivo npx playwright test --project=desktop`. Failures leave a trace and screenshot in `test-results/` (`npx playwright show-report`).
 
 ---
 
 ## Project Structure
 
-An npm-workspaces monorepo: two apps and three shared packages.
+An npm-workspaces monorepo: three apps and three shared packages.
 
 ```
 kivo/
@@ -71,6 +83,9 @@ kivo/
 │   │   │   └── components/ui/  shadcn primitives
 │   │   ├── test/
 │   │   └── vite.config.ts
+│   ├── desktop/              @kivo/desktop — the Electron app: starts the daemon, opens the UI in a window
+│   │   ├── src/              main.ts (daemon process, window, menu) and preload.ts (the page's only bridge)
+│   │   └── scripts/          build.mjs (esbuild bundles), package.mjs (electron-builder), icon.mjs
 │   └── daemon/               @kivo/daemon — the local daemon on 127.0.0.1 (Node, node-pty, ws)
 │       ├── src/
 │       │   ├── index.ts      server entry and routes
@@ -86,8 +101,9 @@ kivo/
 │   ├── ai/                   @kivo/ai — AI layer for both daemon and browser: provider client with failover,
 │   │                         prompts, spec validation, codegen parsing, the coding-agent loop
 │   └── seed-project/         @kivo/seed-project — the demo project's files
+├── e2e/                      Playwright suites: api · web (daemon UI) · browser (hosted) · desktop
 ├── docs/                     architecture and project memory
-├── .github/workflows/ci.yml  typecheck, lint, test and build on Linux and macOS
+├── .github/workflows/ci.yml  checks on Linux and macOS, Playwright, desktop packages for every OS
 └── tsconfig.base.json        compiler options every workspace extends
 ```
 
@@ -110,7 +126,27 @@ The same build runs as a static site with no daemon. On any host other than `loc
 
 A web page can't run a shell, git or Python on your computer, so the **terminal, source control and running services** say they need Kivo on your computer (`npm run dev`). Deleting in the browser is permanent (there's no system trash), and the confirmation says so.
 
-Build for a sub-path (the hosted site lives at `/app/`) with `KIVO_BASE=/app/ npm run build`, then deploy `apps/web/dist`. To try browser mode locally, open `http://localhost:5174/?backend=browser` (`?backend=daemon` switches back).
+Build the hosted site with `npm run build:hosted` (it lives at `/app/`), then deploy `apps/web/dist-hosted`. It's a separate folder, so it never clashes with the build that `npm start` and the desktop app use.
+
+**Which backend is used** is decided when the page loads: the desktop app always uses its own daemon; a hosted site runs in the page; on `localhost`, Kivo uses the daemon if one answers and otherwise runs in the browser instead of showing "offline" (and offers to switch once the daemon starts). To force a mode locally, open `?backend=browser` or `?backend=daemon` (remembered).
+
+---
+
+## Kivo Desktop (macOS, Windows, Linux)
+
+The full system in one app, like the Claude desktop app: no terminal commands, nothing to keep running.
+
+```bash
+npm run desktop           # build and open the app from this checkout
+npm run desktop:package   # installable app for this OS → apps/desktop/release/ (.dmg/.zip, .exe, .AppImage)
+```
+
+- **Always connected.** The app starts Kivo's daemon itself (in an Electron utility process, on a free port on 127.0.0.1) and shows its UI in the window. Everything is real: your folders, terminal, git, installs, tests, running services.
+- **AI.** Paste your Groq key in Settings (⌘,). It's checked with Groq first, then kept in the app's data folder, readable only by your user account, and used only by the daemon. The window never sees it.
+- **Your environment.** Apps opened from the Dock get a bare `PATH`, so Kivo loads your login shell's environment first; the terminal finds your Homebrew, nvm, pyenv tools.
+- **Data** lives in the app's data folder (`~/Library/Application Support/Kivo` on macOS), not in a checkout. Cloned repositories still go to `~/Kivo`. Logs: *Help → Show Logs*.
+- **Safety.** The page has no Node access: a sandboxed window, one small preload bridge (menu commands), and navigation limited to Kivo's own UI; other links open in your browser. The daemon keeps its Host and Origin checks.
+- **Signing.** Builds are unsigned by default (on macOS, right-click → Open the first time). To sign and notarize, set `CSC_LINK`/`CSC_KEY_PASSWORD` and `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID`. CI packages every OS as build artifacts.
 
 ---
 

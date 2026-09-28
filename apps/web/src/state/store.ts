@@ -148,6 +148,8 @@ interface State {
   commandOpen: boolean
   dialog: Dialog
   welcomed: boolean
+  /** The guided tour has been shown (finished or skipped) on this device. */
+  toured: boolean
   prefs: Prefs
   noteFor: KivoRef | null
   experienceDraftOpen: boolean
@@ -189,6 +191,7 @@ interface State {
   setCommandOpen: (v: boolean) => void
   setDialog: (d: Dialog) => void
   setWelcomed: (v: boolean) => void
+  setToured: (v: boolean) => void
   setPref: <K extends keyof Prefs>(k: K, v: Prefs[K]) => void
   openNote: (ref: KivoRef | null) => void
   setExperienceDraftOpen: (v: boolean) => void
@@ -296,6 +299,7 @@ export const useKivo = create<State>()(
       commandOpen: false,
       dialog: null,
       welcomed: false,
+      toured: false,
       prefs: { focusCode: true, captureToolbar: true, buildNotify: true, aiOnSelect: true, autocomplete: true },
       noteFor: null,
       experienceDraftOpen: false,
@@ -455,6 +459,7 @@ export const useKivo = create<State>()(
       setCommandOpen: (commandOpen) => set({ commandOpen }),
       setDialog: (dialog) => set({ dialog, commandOpen: false }),
       setWelcomed: (welcomed) => set({ welcomed }),
+      setToured: (toured) => set({ toured }),
       setPref: (k, v) => set((s) => ({ prefs: { ...s.prefs, [k]: v } })),
       openNote: (noteFor) => set({ noteFor }),
       setExperienceDraftOpen: (experienceDraftOpen) => set({ experienceDraftOpen }),
@@ -525,6 +530,7 @@ export const useKivo = create<State>()(
         personalContext: s.personalContext,
         rememberRuntime: s.rememberRuntime,
         welcomed: s.welcomed,
+        toured: s.toured,
         prefs: s.prefs,
         runtimeLive: s.runtimeLive,
         bottomTab: s.bottomTab,

@@ -22,7 +22,7 @@ export function Navigator() {
 
   return (
     <div className="flex h-full flex-col bg-sidebar">
-      <div className="border-b p-2">
+      <div data-tour="workspace" className="border-b p-2">
         <Select value={discipline} onValueChange={(v) => setDiscipline(v as Discipline)}>
           <SelectTrigger size="sm" className="w-full text-[13px]" aria-label="Workspace">
             <span className="ws-tint flex size-5 shrink-0 items-center justify-center rounded-md">

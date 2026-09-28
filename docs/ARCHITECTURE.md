@@ -396,13 +396,13 @@ Lessons from running it against a free-tier model, now built into the pipeline:
 
 ## 16. Browser mode (the hosted web app)
 
-The UI talks to Kivo only through `apps/web/src/lib/transport.ts`. On `localhost` requests go to the daemon. On any other host (the static deploy), `transport.ts` lazily loads `apps/web/src/backend` and hands every `/api/*` request to it as a standard `Request`, and it answers with standard `Response`s, SSE streams included. Nothing above the transport knows which one answered.
+The UI talks to Kivo only through `apps/web/src/lib/transport.ts`, which picks a backend before the first render (`resolveBackend`): the desktop app and a `localhost` page whose `/api/health` answers with JSON use the daemon. A `localhost` page with no daemon falls back to the browser backend, and `watchForDaemon` offers to switch when one appears. On any other host (the static deploy), `transport.ts` lazily loads `apps/web/src/backend` and hands every `/api/*` request to it as a standard `Request`, and it answers with standard `Response`s, SSE streams included. Nothing above the transport knows which one answered.
 
 ```
 UI ── apiFetch("/api/…") ──▶ transport ──▶ daemon (localhost)                  full system
                                      └──▶ browser backend (hosted)             same API, in the page
                                             ├─ projects.ts   demo · picked folders · GitHub imports (IndexedDB registry)
-                                            ├─ fs/           MemoryFS (IndexedDB) · HandleFS (File System Access API)
+                                            ├─ fs/           MemoryFS (IndexedDB; a write resolves once stored) · HandleFS (File System Access API)
                                             ├─ routes/       core · editor · ai · agent · build (same shapes as the daemon)
                                             └─ settings.ts   the user's Groq key (localStorage, verified before saving)
 ```
@@ -411,3 +411,23 @@ Shared code, not ports: the provider client, prompts, spec validation, codegen p
 
 What can't run in a page (a shell, git, Python installs/tests/servers) answers `501` with a reason, and the UI shows it: the terminal and source-control panels explain it, and builds mark install, test and boot as skipped, ending in the `generated` status ("Code written") rather than `running`.
 
+
+## 17. Desktop app (Electron)
+
+`apps/desktop` packages the daemon and the UI into one app. The main process picks a free port, loads the login shell's environment (Dock-launched apps have a bare `PATH`), and forks the daemon, bundled by esbuild into `daemon.mjs`, as an Electron **utility process** with `--serve`. It then opens a sandboxed `BrowserWindow` on `http://127.0.0.1:<port>/`. So in the desktop app, transport mode is always "daemon".
+
+```
+Electron main ── utilityProcess.fork(daemon.mjs --serve, env) ──▶ daemon on 127.0.0.1:<free port>
+      │                KIVO_HOME / KIVO_KEY_FILE → user data, KIVO_WEB_DIST / KIVO_SEED_DIR → app resources
+      └── BrowserWindow (contextIsolation, sandbox, no Node) ── HTTP/WS ──▶ same daemon API
+              preload: window.kivoDesktop { platform, onCommand }   (menu → UI dialogs)
+```
+
+- **Keys:** with `KIVO_KEY_FILE` set, the daemon accepts `POST /api/settings/key`. It checks the key with Groq, then writes it `0600` to the file. Without that variable, keys come only from `.env` and the route answers 404.
+- **Native code:** node-pty uses N-API, so its prebuilt binary loads in Electron unchanged. The packager copies only this platform's prebuild beside `daemon.mjs`, outside the asar.
+- **Lifecycle:** single-instance lock, window bounds remembered, the daemon killed with SIGTERM on quit (it stops its services and terminals). An unexpected exit offers Restart / Show log / Quit.
+- **Navigation:** only the daemon's own origin renders in the window. `window.open` and off-origin navigation go to `shell.openExternal`. Permissions are denied except clipboard writes.
+
+## 18. End-to-end tests
+
+`playwright.config.ts` starts two servers: the real daemon (`e2e/daemon.ts`, with throwaway `KIVO_HOME`, no keys, a temp key file) and `vite preview` of the built UI. The preview's `/api` proxy points at a dead port, so it also stands in for "a computer where Kivo isn't running". Projects: `api` (the HTTP API), `daemon` (UI served by the daemon), `browser` (served from `kivo.localhost`, so treated as hosted; Groq is mocked with `page.route`), and `desktop` (`_electron.launch` on the dev build, or on a packaged app with `E2E_DESKTOP_APP`). Workers are 1, because the daemon suites share one current project.

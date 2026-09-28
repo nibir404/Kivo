@@ -26,6 +26,7 @@ import {
   Sparkles,
   Wand2,
   Bot,
+  Compass,
 } from "lucide-react"
 import { toast } from "sonner"
 import {
@@ -50,6 +51,7 @@ import { startNewService } from "./Preferences"
 import { askInWorkspace } from "@/features/workspace/hooks"
 import { workspace, WORKSPACES } from "@/features/workspace/registry"
 import { LEVELS, MODES } from "./TopBar"
+import { startTour } from "./tour/store"
 
 /** Universal command interface. Unmatched input is treated as natural language: build it, or ask about it. */
 export function CommandMenu() {
@@ -210,6 +212,9 @@ export function CommandMenu() {
             </CommandItem>
             <CommandItem onSelect={() => run(() => k.setDialog("welcome"))}>
               <Sparkles /> Getting started
+            </CommandItem>
+            <CommandItem onSelect={() => run(startTour)}>
+              <Compass /> Take the tour
             </CommandItem>
           </CommandGroup>
           {q.trim().length > 3 && (

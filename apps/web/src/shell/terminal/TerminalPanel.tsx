@@ -29,7 +29,7 @@ export function TerminalPanel({ visible }: { visible: boolean }) {
         <SquareTerminal className="size-5 opacity-60" />
         <div>Kivo is running in your browser, which can't open a shell on your computer.</div>
         <div>
-          For a real terminal with your files, run Kivo locally: <code className="font-mono text-foreground">npm run dev</code>, then open <code className="font-mono text-foreground">localhost:5174</code>.
+          For a real terminal with your files, use the Kivo desktop app, or run <code className="font-mono text-foreground">npm run dev</code> and open <code className="font-mono text-foreground">localhost:5174</code>.
         </div>
       </div>
     )

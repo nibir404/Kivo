@@ -214,3 +214,7 @@
     --ws: oklch(0.68 0.14 var(--ws-h));
     --ws-ink: oklch(0.8 0.11 var(--ws-h));
 }
+
+/* Desktop app on macOS: the top bar is the window's title bar (drag to move, traffic lights on the left). */
+html[data-desktop="mac"] .kivo-titlebar { padding-left: 80px; -webkit-app-region: drag; user-select: none; }
+html[data-desktop="mac"] .kivo-titlebar :is(button, a, input, [role="button"], [role="combobox"], nav) { -webkit-app-region: no-drag; }

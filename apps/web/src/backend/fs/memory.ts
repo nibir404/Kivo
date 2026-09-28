@@ -3,13 +3,14 @@ import { idb } from "./idb"
 import { ignored, notFound, parentOf, type ProjectFS } from "./types"
 
 /**
- * The demo project in the browser: files in memory, saved to IndexedDB (debounced) so edits
- * survive a reload. Seeded from @kivo/seed-project on first use; `reset` restores it.
+ * The demo project in the browser: files in memory, saved to IndexedDB so edits survive a reload.
+ * A write resolves only once IndexedDB has it, so "Saved" means saved even if the tab closes next. Seeded from @kivo/seed-project on first use; `reset` restores it.
  */
 export class MemoryFS implements ProjectFS {
   private files = new Map<string, string>()
   private folders = new Set<string>()
-  private saveTimer: ReturnType<typeof setTimeout> | null = null
+  private saving: Promise<void> | null = null
+  private dirty = false
   private key: string
 
   private constructor(key: string) {
@@ -45,7 +46,7 @@ export class MemoryFS implements ProjectFS {
   /** Forget a store entirely (an imported repository the user removed). */
   static async drop(key: string) {
     const fs = await MemoryFS.open_.get(key)
-    if (fs?.saveTimer) clearTimeout(fs.saveTimer)
+    await fs?.saving
     MemoryFS.open_.delete(key)
     await idb.del(key)
   }
@@ -54,15 +55,23 @@ export class MemoryFS implements ProjectFS {
   async reset(seed: () => Promise<Record<string, string>>) {
     this.files = new Map(Object.entries(await seed()))
     this.folders = new Set()
-    this.persist()
+    await this.persist()
   }
 
-  private persist() {
-    if (this.saveTimer) clearTimeout(this.saveTimer)
-    this.saveTimer = setTimeout(() => {
-      this.saveTimer = null
-      void idb.set(this.key, { files: [...this.files], folders: [...this.folders] })
-    }, 150)
+  /** Store the current state. Changes made while a save is running are picked up by one more save, which every caller waits for. */
+  private persist(): Promise<void> {
+    this.dirty = true
+    this.saving ??= (async () => {
+      try {
+        while (this.dirty) {
+          this.dirty = false
+          await idb.set(this.key, { files: [...this.files], folders: [...this.folders] })
+        }
+      } finally {
+        this.saving = null
+      }
+    })()
+    return this.saving
   }
 
   private allDirs() {
@@ -95,19 +104,19 @@ export class MemoryFS implements ProjectFS {
   async write(rel: string, content: string) {
     if (this.allDirs().has(rel)) throw new HttpError(409, `${rel} is a folder`)
     this.files.set(rel, content)
-    this.persist()
+    await this.persist()
   }
 
   async mkdir(rel: string) {
     if (this.files.has(rel)) throw new HttpError(409, `${rel} is a file`)
     for (let p = rel; p; p = parentOf(p)) this.folders.add(p)
-    this.persist()
+    await this.persist()
   }
 
   async remove(rel: string) {
     for (const f of [...this.files.keys()]) if (this.under(f, rel)) this.files.delete(f)
     for (const d of [...this.folders]) if (this.under(d, rel)) this.folders.delete(d)
-    this.persist()
+    await this.persist()
   }
 
   async rename(from: string, to: string) {
@@ -122,7 +131,7 @@ export class MemoryFS implements ProjectFS {
       this.folders.delete(d)
       this.folders.add(move(d))
     }
-    this.persist()
+    await this.persist()
   }
 
   async copy(from: string, to: string) {
@@ -132,6 +141,6 @@ export class MemoryFS implements ProjectFS {
       for (const [f, t] of [...this.files]) if (this.under(f, from)) this.files.set(to + f.slice(from.length), t)
       this.folders.add(to)
     }
-    this.persist()
+    await this.persist()
   }
 }

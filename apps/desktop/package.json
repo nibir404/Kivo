@@ -1,0 +1,21 @@
+{
+  "name": "@kivo/desktop",
+  "productName": "Kivo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Kivo for macOS, Windows and Linux: the full system (daemon + UI) in one app.",
+  "author": "Kivo",
+  "main": "build/main.mjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "npm run build -w @kivo/web && node scripts/build.mjs && electron .",
+    "start": "electron .",
+    "package": "npm run build -w @kivo/web && node scripts/build.mjs && node scripts/package.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2"
+  }
+}

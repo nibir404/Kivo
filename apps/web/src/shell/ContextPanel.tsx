@@ -37,7 +37,7 @@ const OPEN_BY_LEVEL: Record<Level, number> = { beginner: 1, intermediate: 2, adv
 export function ContextPanel() {
   const { contextTab, setContextTab, selection, level, setLevel } = useKivo()
   return (
-    <div className="flex h-full flex-col">
+    <div data-tour="context" className="flex h-full flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-2">
         <Tabs value={contextTab} onValueChange={(v) => setContextTab(v as typeof contextTab)}>
           <TabsList variant="line" className="h-8">
@@ -53,7 +53,7 @@ export function ContextPanel() {
           </TabsList>
         </Tabs>
         <Select value={level} onValueChange={(v) => setLevel(v as Level)}>
-          <SelectTrigger size="sm" aria-label="Explanation depth" className="ml-auto h-7 gap-1 border-0 px-2 text-xs text-muted-foreground shadow-none hover:text-foreground">
+          <SelectTrigger data-tour="level" size="sm" aria-label="Explanation depth" className="ml-auto h-7 gap-1 border-0 px-2 text-xs text-muted-foreground shadow-none hover:text-foreground">
             <SelectValue>{LEVELS.find((l) => l.id === level)?.label}</SelectValue>
           </SelectTrigger>
           <SelectContent align="end">

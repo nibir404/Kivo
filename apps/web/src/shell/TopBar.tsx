@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useTheme } from "next-themes"
-import { ChevronsUpDown, Folder, FolderGit2, FolderOpen, FolderTree, GitBranch, Keyboard, Library, X, Monitor, Moon, Network, PanelLeft, PanelRight, RefreshCw, RotateCcw, Search, Settings, Sparkles, SquareTerminal, Sun } from "lucide-react"
+import { ChevronsUpDown, Compass, Folder, FolderGit2, FolderOpen, FolderTree, GitBranch, Keyboard, Library, X, Monitor, Moon, Network, PanelLeft, PanelRight, RefreshCw, RotateCcw, Search, Settings, Sparkles, SquareTerminal, Sun } from "lucide-react"
 import { toast } from "sonner"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -29,6 +29,7 @@ import { useKivo } from "@/state/store"
 import { workspace } from "@/features/workspace/registry"
 import { useUi } from "./capture"
 import { ProviderMenu } from "./ProviderMenu"
+import { startTour } from "./tour/store"
 import { shortPath, useRecentProjects } from "./projects/ProjectDialogs"
 
 export const MODES: { id: Mode; label: string; key: string; hint: string }[] = [
@@ -61,7 +62,7 @@ export function TopBar({ compact = false, onToggleLeft, onToggleRight }: { compa
   const primary = workspace(discipline).primaryMode
 
   const modeTabs = (
-    <nav className={cn("flex items-center gap-0.5", compact ? "min-w-0 flex-1 overflow-x-auto [scrollbar-width:none]" : "ml-1")} aria-label="Modes">
+    <nav data-tour="modes" className={cn("flex items-center gap-0.5", compact ? "min-w-0 flex-1 overflow-x-auto [scrollbar-width:none]" : "ml-1")} aria-label="Modes">
       {MODES.map((m) => (
         <Tooltip key={m.id} delayDuration={500}>
           <TooltipTrigger asChild>
@@ -89,17 +90,17 @@ export function TopBar({ compact = false, onToggleLeft, onToggleRight }: { compa
 
   if (compact) {
     return (
-      <header className="flex h-11 shrink-0 items-center gap-1 border-b px-2">
-        <Button variant="ghost" size="icon-sm" onClick={onToggleLeft} aria-label="Open navigator">
+      <header className="kivo-titlebar flex h-11 shrink-0 items-center gap-1 border-b px-2">
+        <Button data-tour="workspace-toggle" variant="ghost" size="icon-sm" onClick={onToggleLeft} aria-label="Open navigator">
           <PanelLeft />
         </Button>
         <KivoMark className="mx-1 shrink-0" />
         {modeTabs}
-        <Button variant="ghost" size="icon-sm" onClick={() => setCommandOpen(true)} aria-label="Command menu">
+        <Button data-tour="command" variant="ghost" size="icon-sm" onClick={() => setCommandOpen(true)} aria-label="Command menu">
           <Search />
         </Button>
         <ProviderMenu compactTrigger />
-        <Button variant="ghost" size="icon-sm" onClick={onToggleRight} aria-label="Open context panel">
+        <Button data-tour="context-toggle" variant="ghost" size="icon-sm" onClick={onToggleRight} aria-label="Open context panel">
           <PanelRight />
         </Button>
         <AccountMenu />
@@ -108,7 +109,7 @@ export function TopBar({ compact = false, onToggleLeft, onToggleRight }: { compa
   }
 
   return (
-    <header className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
+    <header className="kivo-titlebar flex h-11 shrink-0 items-center gap-2 border-b px-3">
       <div className="flex shrink-0 items-center gap-2 pr-1">
         <KivoMark />
         <span className="text-sm font-semibold tracking-tight">Kivo</span>
@@ -118,7 +119,7 @@ export function TopBar({ compact = false, onToggleLeft, onToggleRight }: { compa
       {modeTabs}
 
       <div className="ml-auto flex items-center gap-1.5">
-        <Button variant="outline" size="sm" className="w-40 justify-start gap-2 font-normal text-muted-foreground lg:w-56 xl:w-72" onClick={() => setCommandOpen(true)}>
+        <Button data-tour="command" variant="outline" size="sm" className="w-40 justify-start gap-2 font-normal text-muted-foreground lg:w-56 xl:w-72" onClick={() => setCommandOpen(true)}>
           <Search />
           <span className="truncate">Build, ask, or jump to…</span>
           <KbdGroup className="ml-auto">
@@ -144,7 +145,7 @@ function ProjectMenu() {
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-1.5 font-normal" title={projectInfo?.dir}>
+        <Button data-tour="project" variant="ghost" size="sm" className="gap-1.5 font-normal" title={projectInfo?.dir}>
           <span className="font-medium">{project}</span>
           <span className="hidden text-muted-foreground xl:inline">{analysis.summary}</span>
           <ChevronsUpDown className="text-muted-foreground" />
@@ -326,6 +327,9 @@ export function AccountMenu() {
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => setDialog("welcome")}>
           <Sparkles /> Getting started
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={startTour}>
+          <Compass /> Take the tour
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

@@ -1,18 +1,19 @@
 import type { ReactNode } from "react"
 import { useTheme } from "next-themes"
-import { ArrowRight, Code2, Compass, FolderOpen, KeyRound, Monitor, Moon, Network, RefreshCw, Sparkles, Sun } from "lucide-react"
+import { ArrowRight, Code2, Compass, FolderOpen, KeyRound, Map, Monitor, Moon, Network, RefreshCw, Sparkles, Sun } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Kbd } from "@/components/ui/kbd"
 import { Switch } from "@/components/ui/switch"
 import type { Level } from "@kivo/core/types"
-import { inBrowser } from "@/lib/transport"
+import { inBrowser, keyInApp } from "@/lib/transport"
 import { cn } from "@/lib/utils"
 import { refreshProviders, switchProvider } from "@/state/runners"
 import { useKivo } from "@/state/store"
 import { useUi } from "./capture"
 import { GroqKeyForm } from "./GroqKey"
+import { startTour } from "./tour/store"
 import { KivoMark, LEVELS } from "./TopBar"
 
 export function PreferenceDialogs() {
@@ -84,7 +85,7 @@ function WelcomeDialog() {
         </div>
 
         <div className="space-y-5 px-6 py-5">
-          {inBrowser && !ai?.ai && (
+          {keyInApp() && !ai?.ai && (
             <div className="space-y-2 rounded-xl border p-3">
               <div className="flex items-center gap-2 text-[13px] font-medium">
                 <KeyRound className="size-4" /> Connect AI with your Groq key
@@ -93,7 +94,7 @@ function WelcomeDialog() {
                 <GroqKeyForm autoFocus />
               ) : (
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs text-muted-foreground">Planning, Ask, inline edits, autocomplete and the agent call Groq directly from this page. The key stays in this browser.</p>
+                  <p className="text-xs text-muted-foreground">Planning, Ask, inline edits, autocomplete and the agent call Groq directly from this page. {inBrowser ? "The key stays in this browser." : "The key stays on this computer."}</p>
                   <Button size="sm" variant="outline" onClick={() => setKeyOpen(true)}>
                     Add key
                   </Button>
@@ -131,12 +132,17 @@ function WelcomeDialog() {
           <span className="min-w-0 flex-1 truncate">
             {ai?.ai
               ? `AI ready · ${ai.providers.find((p) => p.id === ai.active)?.label} · ${ai.model.split("/").pop()}`
-              : inBrowser
-                ? "Running in your browser — add a Groq key to turn on AI"
+              : keyInApp()
+                ? inBrowser
+                  ? "Running in your browser — add a Groq key to turn on AI"
+                  : "Add a Groq key to turn on AI"
                 : daemon
                   ? "No AI provider connected — Kivo uses offline templates"
                   : "Daemon offline — Kivo works in simulation until it connects"}
           </span>
+          <Button variant="ghost" size="sm" onClick={() => start(startTour)}>
+            <Map /> Take the tour
+          </Button>
           <Button variant="ghost" size="sm" onClick={close}>
             <Compass /> Just look around
           </Button>
@@ -234,8 +240,8 @@ function SettingsDialog() {
             <LevelPicker value={k.level} onChange={k.setLevel} />
           </Section>
 
-          {inBrowser ? (
-            <Section title="AI" description="Kivo is running in your browser and calls Groq directly from this page with your own key.">
+          {keyInApp() ? (
+            <Section title="AI" description={inBrowser ? "Kivo is running in your browser and calls Groq directly from this page with your own key." : "Kivo calls Groq with your own key, kept on this computer."}>
               <GroqKeyForm />
             </Section>
           ) : (

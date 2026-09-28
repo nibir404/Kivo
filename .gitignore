@@ -29,3 +29,10 @@ dist-ssr
 .kivo-workspace/
 .puku-cli/
 .mcp.json
+apps/web/dist-hosted/
+apps/desktop/build/
+apps/desktop/release/
+apps/desktop/.stage/
+test-results/
+playwright-report/
+e2e/.tmp/

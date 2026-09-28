@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Check, ExternalLink, KeyRound, Loader2, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { inBrowser } from "@/lib/transport"
 import { saveGroqKey } from "@/state/runners"
 import { useKivo } from "@/state/store"
 
@@ -74,7 +75,7 @@ export function GroqKeyForm({ onSaved, autoFocus }: { onSaved?: () => void; auto
         </p>
       )}
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        Stored only in this browser and sent only to Groq. Anyone using this browser profile can use it.{" "}
+        {inBrowser ? "Stored only in this browser and sent only to Groq. Anyone using this browser profile can use it." : "Stored on this computer (readable only by your user account) and sent only to Groq."}{" "}
         <a className="inline-flex items-center gap-0.5 underline underline-offset-2 hover:text-foreground" href="https://console.groq.com/keys" target="_blank" rel="noreferrer">
           Get a key <ExternalLink className="size-3" />
         </a>
