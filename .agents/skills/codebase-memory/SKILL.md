@@ -35,11 +35,12 @@ git diff --stat
 git diff HEAD~1..HEAD --stat # if already committed locally
 ```
 Identify which areas were affected:
-- Core server/daemon logic (`server/`)
-- UI shell & components (`src/`)
+- Daemon (`apps/daemon/src/`)
+- Web UI shell & features (`apps/web/src/`)
+- Shared domain model (`packages/core/src/`)
 - Toolchains, pipelines, or sandbox guards
 - Configuration (`package.json`, `.env.example`, `tsconfig`)
-- Test suites (`tests/`)
+- Test suites (`*/test/` in each workspace)
 
 ### Step 2: Extract Architectural & Semantic Context
 Synthesize the changes across five primary dimensions:

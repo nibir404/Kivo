@@ -44,13 +44,54 @@ npm start              # daemon serves the built UI → open http://localhost:51
 ### 4. Tests & Quality Gates
 
 ```bash
-npm test          # 158 tests across 34 suites (agent, SCM, projects, editor, toolchains)
-npm run typecheck # TypeScript strict typecheck across client and server
-npm run lint      # oxlint validation
-npm run check     # full verification (typecheck + lint + tests)
+npm test          # every workspace's tests (core, daemon, web)
+npm run typecheck # TypeScript across every workspace, tests included
+npm run lint      # oxlint over the whole repo
+npm run check     # typecheck + lint + tests (what CI runs, plus the build)
 ```
 
+Run one workspace with `-w`, e.g. `npm test -w @kivo/daemon` or `npm run dev -w @kivo/web`.
+
 ---
+
+## Project Structure
+
+An npm-workspaces monorepo: two apps and one shared package.
+
+```
+kivo/
+├── apps/
+│   ├── web/                  @kivo/web — the browser UI (React 19, Vite, Tailwind, shadcn)
+│   │   ├── src/
+│   │   │   ├── shell/        app frame: top bar, navigator, panels, ⌘K, dialogs, projects, terminal
+│   │   │   ├── features/     build · code · editor · scm · agent · observe · learn · library · workspace
+│   │   │   ├── state/        zustand store and the actions that talk to the daemon
+│   │   │   ├── lib/          typed clients for the daemon API
+│   │   │   └── components/ui/  shadcn primitives
+│   │   ├── test/
+│   │   └── vite.config.ts
+│   └── daemon/               @kivo/daemon — the local daemon on 127.0.0.1 (Node, node-pty, ws)
+│       ├── src/
+│       │   ├── index.ts      server entry and routes
+│       │   ├── http/         response helpers, Host/Origin policy, static UI serving
+│       │   ├── ai/           model providers and prompts
+│       │   ├── build/        the build pipeline, templates, spec validation, toolchains
+│       │   ├── projects/     current project, open / clone / switch
+│       │   ├── editor/ scm/ agent/ terminal/   one folder per feature API
+│       │   └── paths.ts      where the repo, seed project and built UI live
+│       ├── seed-project/     the demo project
+│       └── test/
+├── packages/
+│   └── core/                 @kivo/core — pure-TypeScript domain model shared by both apps
+│       ├── src/              service IR, intent parsing, planning, stack detection, search matching
+│       └── test/
+├── docs/                     architecture and project memory
+├── scripts/
+├── .github/workflows/ci.yml  typecheck, lint, test and build on Linux and macOS
+└── tsconfig.base.json        compiler options every workspace extends
+```
+
+Boundaries: `@kivo/core` imports nothing from either app, and the web app never imports daemon code. They talk only over the daemon's HTTP/SSE and WebSocket API. The `.env` file and the `.kivo-workspace/` data folder stay at the repo root. `npm run build` writes the UI to `apps/web/dist`, which `npm start` serves (`KIVO_WEB_DIST` points it elsewhere).
 
 ## What's Real in Kivo
 
@@ -100,7 +141,7 @@ Name a language in your prompt (*"Create an invoice service in Spring Boot"*) an
 | **Java / Kotlin (Spring, Quarkus)** | Supported | Preflight flags as unbuilt; offers Python pipeline or external build |
 | **TypeScript / Node / Go / Rust** | Supported | Verified preflight detection; toolchains in active development |
 
-Adding a language requires defining a toolchain in `src/core/stacks.ts`, preflight checks in `server/toolchains.ts`, and pipeline verification steps. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#toolchains).
+Adding a language requires defining a toolchain in `packages/core/src/stacks.ts`, preflight checks in `apps/daemon/src/build/toolchains.ts`, and pipeline verification steps. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#toolchains).
 
 ---
 

@@ -1,0 +1,14 @@
+{
+  "name": "@kivo/core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Kivo's domain model: service IR, intent parsing, planning, stack detection and search matching. Pure TypeScript, shared by the web UI and the daemon.",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

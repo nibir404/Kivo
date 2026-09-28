@@ -80,7 +80,7 @@ Sources of truth, in precedence order:
 
 `Experience` = problem · context · investigation · decision · implementation · outcome · metric · lesson, linked to concepts and projects. Experiences can be captured manually or suggested from runtime evidence (e.g. a slow-query span).
 
-See `src/core/types.ts` for the exact shapes.
+See `packages/core/src/types.ts` for the exact shapes.
 
 ---
 
@@ -101,13 +101,13 @@ Why an IR:
 - **Diffable** — "Add rate limiting" becomes an IR diff, then a plan, then a code diff.
 - **Stack-independent** — switching FastAPI → Express regenerates from the same spec.
 
-The Intent Agent emits the IR under a strict JSON schema, grounded in the System Graph (existing stack and conventions). Ambiguity is returned as explicit questions, not guesses. The prototype uses a deterministic template matcher with the same output contract (`src/core/intent.ts`).
+The Intent Agent emits the IR under a strict JSON schema, grounded in the System Graph (existing stack and conventions). Ambiguity is returned as explicit questions, not guesses. The prototype uses a deterministic template matcher with the same output contract (`packages/core/src/intent.ts`).
 
 ---
 
 ## 4. Planner and execution
 
-`planFor(spec)` (`src/core/plan.ts`) produces ordered `PlanStep`s. Each step declares:
+`planFor(spec)` (`packages/core/src/plan.ts`) produces ordered `PlanStep`s. Each step declares:
 
 | Field | Purpose |
 |---|---|
@@ -137,16 +137,16 @@ A **toolchain** is what it takes to turn a language's source into a verified run
 
 | Layer | File | Responsibility |
 |---|---|---|
-| Facts (shared) | `src/core/stacks.ts` → `TOOLCHAINS` | Extension, installer, test runner, runtime, and `buildable` per language. The planner and UI read this; nothing assumes "not Python ⇒ TypeScript". |
-| Detection (shared) | `src/core/stacks.ts` → `detectStack` | Deterministic: a language/framework named in the request beats the picker. |
-| Preflight (daemon) | `server/toolchains.ts` | Probes the machine (e.g. `python3 --version`, ≥ 3.9), cached 60 s, exposed on `/api/health`. A build that can't finish is refused **before any AI call**. |
-| Execution (daemon) | `server/pipeline.ts` | The step implementations. Python: pip → pyflakes → pytest (+ repair) → uvicorn `/health`. |
+| Facts (shared) | `packages/core/src/stacks.ts` → `TOOLCHAINS` | Extension, installer, test runner, runtime, and `buildable` per language. The planner and UI read this; nothing assumes "not Python ⇒ TypeScript". |
+| Detection (shared) | `packages/core/src/stacks.ts` → `detectStack` | Deterministic: a language/framework named in the request beats the picker. |
+| Preflight (daemon) | `apps/daemon/src/build/toolchains.ts` | Probes the machine (e.g. `python3 --version`, ≥ 3.9), cached 60 s, exposed on `/api/health`. A build that can't finish is refused **before any AI call**. |
+| Execution (daemon) | `apps/daemon/src/build/pipeline.ts` | The step implementations. Python: pip → pyflakes → pytest (+ repair) → uvicorn `/health`. |
 
 Only Python is `buildable` today. Other languages are planned and reviewed normally; the review screen explains the limit and offers a buildable language. Adding one = a `TOOLCHAINS` entry with `buildable: true`, a preflight check, and install/test/boot steps in the pipeline.
 
 ### Daemon boundary
 
-Everything entering the daemon is untrusted and validated in `server/spec.ts` / `server/http.ts`: JSON bodies are size-limited and parsed with 4xx errors, service ids are slugs (`services/<id>` can't escape), stacks are reduced to known languages, and the Intent Agent is grounded in the *actual* service list sent by the UI — never hard-coded names. New services that share a name with a detected service get their own id and directory instead of replacing it.
+Everything entering the daemon is untrusted and validated in `apps/daemon/src/build/spec.ts` / `apps/daemon/src/http/http.ts`: JSON bodies are size-limited and parsed with 4xx errors, service ids are slugs (`services/<id>` can't escape), stacks are reduced to known languages, and the Intent Agent is grounded in the *actual* service list sent by the UI — never hard-coded names. New services that share a name with a detected service get their own id and directory instead of replacing it.
 
 ### Agents
 
@@ -168,11 +168,11 @@ Agents communicate only through the graphs and the IR — never free-form chat w
 
 ## 5. Project intelligence
 
-`analyzeRepository(files)` (`src/core/detect.ts`) runs rule-based detectors over manifests and config: languages (by line share), frameworks, package managers, databases, caches, infra (Docker, Kubernetes), AI/ML (PyTorch, CUDA, Gymnasium), test frameworks. Output is a list of `Detection { tech, category, evidence, confidence }`. The evidence path is always shown so the user can verify the claim.
+`analyzeRepository(files)` (`packages/core/src/detect.ts`) runs rule-based detectors over manifests and config: languages (by line share), frameworks, package managers, databases, caches, infra (Docker, Kubernetes), AI/ML (PyTorch, CUDA, Gymnasium), test frameworks. Output is a list of `Detection { tech, category, evidence, confidence }`. The evidence path is always shown so the user can verify the claim.
 
 The detected disciplines drive the **adaptive workspace**: Software, Web & Mobile, Data Engineering, AI/ML, RL, Security, DevOps, Embedded/IoT and Game Development are lenses over the same engine, not separate products.
 
-Each non-software workspace is a `WorkspaceDef` (`src/features/workspace/defs/*.ts`): vocabulary, accent hue, home screen, example prompts, and sections. A section's `build(ctx)` is a pure function of the project context (files, detections, services, system graph, logs, traces) that returns typed panels (table, metrics with charts, board, checklist, timeline) plus its **source** — `project` (with evidence), `example` or `guide` — so the UI can always say what is real. `tests/workspaces.test.ts` builds every section against several repositories, including an empty one, where nothing may claim to be real.
+Each non-software workspace is a `WorkspaceDef` (`apps/web/src/features/workspace/defs/*.ts`): vocabulary, accent hue, home screen, example prompts, and sections. A section's `build(ctx)` is a pure function of the project context (files, detections, services, system graph, logs, traces) that returns typed panels (table, metrics with charts, board, checklist, timeline) plus its **source** — `project` (with evidence), `example` or `guide` — so the UI can always say what is real. `apps/web/test/workspaces.test.ts` builds every section against several repositories, including an empty one, where nothing may claim to be real.
 
 ---
 
@@ -219,7 +219,7 @@ Explain · Why? · Note · Save · Ask AI        (keys: E W N S A)
 - **Save** → `LibraryItem` with source mode, project and concept link
 - **Ask AI** → contextual conversation with the ref attached
 
-Implementation: `src/shell/capture.tsx`.
+Implementation: `apps/web/src/shell/capture.tsx`.
 
 ---
 
@@ -229,7 +229,7 @@ Implementation: `src/shell/capture.tsx`.
 Foundation model + Project context + System Graph + Personal knowledge + Experiences + Intent
 ```
 
-`assembleContext` (`src/core/context.ts`):
+`assembleContext` (`packages/core/src/context.ts`):
 
 1. Resolve the selection and question into **primary** concepts; expand to **related** concepts at reduced weight.
 2. Retrieve project facts from the System Graph and IR.
@@ -331,25 +331,27 @@ Initial stacks: React / React Native + TypeScript; Node.js/TypeScript, Python/Fa
 ## 14. Prototype map
 
 ```
-src/
-  core/                 framework-free domain logic
-    types.ts            IR, graphs, runtime, knowledge, experience, refs
-    intent.ts           intent → ServiceSpec, IR → YAML
-    plan.ts             ServiceSpec → PlanStep[] (+ code preview)
-    detect.ts           deterministic repository analysis
-    runtime.ts          trace simulator with 4-level narration
-    concepts.ts         concept catalog (5-layer disclosure)
-    context.ts          personal-context retrieval, answers, learning insights
-    stacks.ts           language → framework catalog
-    seed.ts             demo project, notes, experiences
-  state/store.ts        zustand store (persisted: level, library, experiences, privacy)
-  shell/                layout, top bar, navigator, context panel, bottom panel,
-                        ⌘K, Explain & Capture, dialogs
-  features/{build,observe,learn,library}/
-  components/ui/        shadcn components
+packages/core/src/        framework-free domain logic (@kivo/core, shared by UI and daemon)
+  types.ts                IR, graphs, runtime, knowledge, experience, refs
+  intent.ts               intent → ServiceSpec, IR → YAML
+  plan.ts                 ServiceSpec → PlanStep[] (+ code preview)
+  detect.ts               deterministic repository analysis
+  runtime.ts              trace simulator with 4-level narration
+  concepts.ts             concept catalog (5-layer disclosure)
+  context.ts              personal-context retrieval, answers, learning insights
+  stacks.ts               language → framework catalog
+  seed.ts                 demo project, notes, experiences
+  match.ts                find/replace matcher (the editor's search and the daemon's replace)
+apps/web/src/
+  state/store.ts          zustand store (persisted: level, library, experiences, privacy)
+  shell/                  layout, top bar, navigator, context panel, bottom panel,
+                          ⌘K, Explain & Capture, dialogs, projects, terminal
+  features/               build, code, editor, scm, agent, observe, learn, library, workspace
+  lib/                    typed clients for the daemon's HTTP/SSE API
+  components/ui/          shadcn components
 ```
 
-The `core/` modules have the same inputs and outputs the production agents and services will have, so they can be swapped one at a time (e.g. replace `parseIntent` with an Intent Agent call) without touching the UI.
+The `@kivo/core` modules have the same inputs and outputs the production agents and services will have, so they can be swapped one at a time (e.g. replace `parseIntent` with an Intent Agent call) without touching the UI.
 
 ---
 
@@ -363,15 +365,25 @@ Browser UI ──/api (HTTP+SSE)──▶ Kivo daemon (127.0.0.1:5175) ──▶
 ```
 
 ```
-server/
-  index.ts      routes, intent normalization, API-client proxy
-  web.ts        Host/Origin policy (DNS-rebinding guard), serving the built UI with security headers
-  terminals.ts  terminal sessions: detach/re-attach, replay buffer, flow control, idle expiry
-  ai.ts         streaming client, provider/model failover, rate-limit waits, stall watchdog
-  pipeline.ts   plan execution: codegen → install → lint/autofix → test → repair → boot → commit
-  prompts.ts    Intent / Implementation / Repair agent prompts and conventions
-  scaffold.ts   deterministic infrastructure templates (db, outbox, kv, test fixtures)
-  workspace.ts  project workspace, safe paths, detection over real files, git
+apps/daemon/src/
+  index.ts                  HTTP + WebSocket server, routes, intent normalization, API-client proxy
+  paths.ts                  repo / daemon / seed / web-dist locations (independent of cwd)
+  http/http.ts              JSON, SSE and error helpers
+  http/web.ts               Host/Origin policy (DNS-rebinding guard), serving the built UI with security headers
+  events/bus.ts             in-process event bus → /api/events
+  ai/ai.ts                  streaming client, provider/model failover, rate-limit waits, stall watchdog
+  ai/prompts.ts             Intent / Implementation / Repair agent prompts and conventions
+  build/pipeline.ts         plan execution: codegen → install → lint/autofix → test → repair → boot → commit
+  build/scaffold.ts         deterministic infrastructure templates (db, outbox, kv, test fixtures)
+  build/spec.ts             model output → validated ServiceSpec
+  build/toolchains.ts       per-language preflight
+  projects/workspace.ts     the current project, safe paths, file listing, detection, git
+  projects/projects.ts      open folder / clone / switch routes
+  editor/editor.ts          file operations (trash), search/replace, file watcher
+  scm/scm.ts                git status, diffs, staging, commits, branches, remotes
+  agent/agent.ts            tool-calling agent with approvals; inline completion
+  terminal/terminals.ts     terminal sessions: detach/re-attach, replay buffer, flow control, idle expiry
+apps/daemon/seed-project/   the demo project copied into .kivo-workspace on first run
 ```
 
 Lessons from running it against a free-tier model, now built into the pipeline:

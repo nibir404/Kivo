@@ -24,17 +24,17 @@
 |---|---|---|---|
 | **Kivo Daemon** | Node.js 22 + `tsx watch` + `ws` + `node-pty` | `http://127.0.0.1:5175` | Local API, WebSocket terminal server, build pipeline, git/SCM engine, file system sandbox, AI orchestration |
 | **Kivo UI** | Vite 8 + React 19 + Tailwind v4 + shadcn/ui | `http://localhost:5174` | Desktop web interface, CodeMirror 6 editor, xterm.js terminal, React Flow graphs |
-| **Unified Production** | Daemon single-port serving | `http://localhost:5175` | Daemon serves the production build (`dist/`) directly on port 5175 via `npm start` |
+| **Unified Production** | Daemon single-port serving | `http://localhost:5175` | Daemon serves the production build (`apps/web/dist/`) directly on port 5175 via `npm start` |
 | **Funchole Cloud Deploy** | Gateway `5zyu0p.funchole.dev` | `https://5zyu0p.funchole.dev/app/` | STATIC Function (`fn_kivo`) routed via Flow `flw_kivo_app` (`/app/*`) on Default Gateway |
-| **Vite Proxy** | Configured in `vite.config.ts` | `/api` and `/ws` → `5175` | Development proxy enabling hot module reloading without cross-origin issues |
+| **Vite Proxy** | Configured in `apps/web/vite.config.ts` | `/api` and `/ws` → `5175` | Development proxy enabling hot module reloading without cross-origin issues |
 
 ---
 
 ## 3. Core Subsystems & Architecture
 
-### A. Intent, Spec & Build Pipeline (`server/pipeline.ts`, `server/spec.ts`, `server/prompts.ts`)
+### A. Intent, Spec & Build Pipeline (`apps/daemon/src/build/pipeline.ts`, `apps/daemon/src/build/spec.ts`, `apps/daemon/src/ai/prompts.ts`)
 - **Intent Analysis**: Streams user requirements through LLM (Groq default `gpt-oss-120b`), generating a structured Service IR (`ServiceSpec`).
-- **Validation & Preflight**: Strict boundary checks (`server/toolchains.ts`). Language toolchains must be validated before file writes or model calls.
+- **Validation & Preflight**: Strict boundary checks (`apps/daemon/src/build/toolchains.ts`). Language toolchains must be validated before file writes or model calls.
 - **Code Generation**: Implementation Agent writes domain code into `.kivo-workspace/tandem/services/<id>/`. Infrastructure files (`db.py`, `outbox.py`, `kv.py`, `conftest.py`) are deterministically templated to prevent hallucinated boilerplates.
 - **Verification Loop**: 
   1. `pip install` from detected imports (only against allowlisted packages; unknown packages halted).
@@ -43,14 +43,14 @@
   4. Up to 3 AI repair iterations using targeted SEARCH/REPLACE blocks.
   5. `uvicorn` process launch with `/health` polling.
 
-### B. In-App Source Control / Git Integration (`server/scm.ts`, `src/features/scm/`)
+### B. In-App Source Control / Git Integration (`apps/daemon/src/scm/scm.ts`, `apps/web/src/features/scm/`)
 - Full Git client integrated in the IDE powered by Git Porcelain v2.
 - Supports: Staging, unstaging, line-level / file-level discard (untracked files sent safely to OS Trash, never hard deleted).
 - Diff visualizer: Side-by-side and unified diffs with syntax highlighting.
 - AI Commit Messages: Grounded specifically on staged diff context.
 - Remote management: Branch creation, checkout, tracking upstreams, push, pull with conflict detection.
 
-### C. Autonomous AI Coding Agent (`server/agent.ts`, `src/features/agent/`)
+### C. Autonomous AI Coding Agent (`apps/daemon/src/agent/agent.ts`, `apps/web/src/features/agent/`)
 - Multi-turn tool-calling loop equipped with:
   - `list_files`: Glob / regex pattern directory listing.
   - `read_file`: Line-ranged safe text reading.
@@ -60,25 +60,25 @@
 - Sandbox security: All paths resolved via `resolveIn()`. Traversal, symlink escaping, and `.git` writes are strictly prevented.
 - Autocomplete engine: Fill-in-the-middle (FIM) ghost text completion in the editor with debouncing and LRU cache.
 
-### D. Multi-Project Management (`server/projects.ts`, `src/shell/projects/`)
+### D. Multi-Project Management (`apps/daemon/src/projects/projects.ts`, `apps/web/src/shell/projects/`)
 - Allows opening any local folder or cloning Git repositories directly into Kivo.
 - Maintains recent project history, persistent project settings, and project-scoped sandboxes.
 - Seamless toggle between managed demo workspace and custom user projects.
 
-### E. Advanced Code Editor (`server/editor.ts`, `src/features/editor/`, `src/features/code/`)
+### E. Advanced Code Editor (`apps/daemon/src/editor/editor.ts`, `apps/web/src/features/editor/`, `apps/web/src/features/code/`)
 - Built on CodeMirror 6 with support for Python, TypeScript, TSX, JS, SQL, Markdown, YAML, and JSON.
 - Multi-tab management: Pinning, reordering, dirty state tracking, and tab actions.
 - Project-wide search: Hybrid engine with ripgrep JSON, `git grep`, and pure JavaScript fallback.
 - Document symbol outline and breadcrumb navigation.
 - Inline AI edits (⌘K): Selection-based or whole-file diff streaming with Accept/Reject controls.
 
-### F. Persistent Terminal Multiplexer (`server/terminals.ts`, `src/shell/terminal/`)
+### F. Persistent Terminal Multiplexer (`apps/daemon/src/terminal/terminals.ts`, `apps/web/src/shell/terminal/`)
 - `node-pty` instances running in daemon background over WebSockets.
 - Sessions persist across page refreshes and browser tab closes.
 - Automatic reconnect with scrollback replay buffers.
 - GPU-accelerated rendering with WebGL fallback to DOM.
 
-### G. Domain Workspaces (`src/features/workspace/`)
+### G. Domain Workspaces (`apps/web/src/features/workspace/`)
 Nine specialized engineering perspectives over the same codebase:
 1. **Software**: End-to-end service generation, spec planning, and live API observation.
 2. **Web & Mobile**: Component hierarchies, route inspection, accessibility audits, and design tokens.
