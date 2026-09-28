@@ -138,10 +138,12 @@ export function SearchPanel() {
       useSearch.setState({ query: seed })
       useEditor.setState({ searchSeed: null })
     }
-    requestAnimationFrame(() => {
+    // After the click that opened the view has finished moving focus (to its button / tooltip).
+    const t = setTimeout(() => {
       input.current?.focus()
       input.current?.select()
-    })
+    }, 30)
+    return () => clearTimeout(t)
   }, [focusTick])
 
   // Search as you type (debounced), and again whenever an option or filter changes.

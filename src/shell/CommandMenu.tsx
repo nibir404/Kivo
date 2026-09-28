@@ -6,9 +6,14 @@ import {
   Bug,
   Check,
   FileCode2,
+  FileSearch,
+  FolderOpen,
+  GitBranch,
+  GitFork,
   GraduationCap,
   Keyboard,
   Settings,
+  SquareTerminal,
   HelpCircle,
   History,
   Lightbulb,
@@ -20,6 +25,7 @@ import {
   Server,
   Sparkles,
   Wand2,
+  Bot,
 } from "lucide-react"
 import { toast } from "sonner"
 import {
@@ -36,7 +42,10 @@ import {
 import { CONCEPTS } from "@/core/concepts"
 import { ask, openFile, understand } from "@/state/runners"
 import { useKivo } from "@/state/store"
-import { useCaptureActions } from "./capture"
+import { useCaptureActions, useUi } from "./capture"
+import { useAgent } from "@/features/agent/store"
+import { useEditor } from "@/features/editor/store"
+import { useTerminals } from "./terminal/store"
 import { startNewService } from "./Preferences"
 import { askInWorkspace } from "@/features/workspace/hooks"
 import { workspace, WORKSPACES } from "@/features/workspace/registry"
@@ -71,37 +80,6 @@ export function CommandMenu() {
         <CommandInput value={q} onValueChange={setQ} placeholder="Describe what you want, or type a command…" />
         <CommandList className="max-h-[420px]">
           {q.trim().length <= 3 && <CommandEmpty>No command matches.</CommandEmpty>}
-          {q.trim().length > 3 && (
-            <CommandGroup heading="Natural language" forceMount>
-              {k.discipline === "software" ? (
-                <CommandItem forceMount value={`__build ${q}`} onSelect={() => run(() => understand(q))}>
-                  <Wand2 />
-                  Build: <span className="truncate text-muted-foreground">{q}</span>
-                  <CommandShortcut>↵</CommandShortcut>
-                </CommandItem>
-              ) : (
-                // Building services is Software's flow; elsewhere the question is asked in the workspace's context.
-                <CommandItem forceMount value={`__wsask ${q}`} onSelect={() => run(() => askInWorkspace(workspace(k.discipline), q))}>
-                  <MessageSquare />
-                  Ask in {workspace(k.discipline).label}: <span className="truncate text-muted-foreground">{q}</span>
-                  <CommandShortcut>↵</CommandShortcut>
-                </CommandItem>
-              )}
-              <CommandItem
-                forceMount
-                value={`__ask ${q}`}
-                onSelect={() =>
-                  run(() => {
-                    k.select(k.selection, "ai")
-                    ask(q, k.selection)
-                  })
-                }
-              >
-                <MessageSquare />
-                Ask Kivo: <span className="truncate text-muted-foreground">{q}</span>
-              </CommandItem>
-            </CommandGroup>
-          )}
           <CommandGroup heading="Actions">
             <CommandItem onSelect={() => run(startNewService)}>
               <Sparkles /> Create service
@@ -139,6 +117,29 @@ export function CommandMenu() {
             </CommandItem>
             <CommandItem onSelect={() => run(() => k.setMode("library"))}>
               <History /> Show previous experience
+            </CommandItem>
+          </CommandGroup>
+          <CommandGroup heading="Project & editor">
+            <CommandItem onSelect={() => run(() => useUi.getState().setProjectDialog("open"))}>
+              <FolderOpen /> Open folder… <CommandShortcut>⌘O</CommandShortcut>
+            </CommandItem>
+            <CommandItem onSelect={() => run(() => useUi.getState().setProjectDialog("clone"))}>
+              <GitFork /> Clone repository…
+            </CommandItem>
+            <CommandItem value="go to file quick open" onSelect={() => run(() => { k.setMode("code"); useEditor.getState().setPalette("files") })}>
+              <FileCode2 /> Go to file… <CommandShortcut>⌘P</CommandShortcut>
+            </CommandItem>
+            <CommandItem value="find in files search replace" onSelect={() => run(() => { k.setMode("code"); useEditor.getState().focusSearch() })}>
+              <FileSearch /> Find in files <CommandShortcut>⌘⇧F</CommandShortcut>
+            </CommandItem>
+            <CommandItem value="source control git commit" onSelect={() => run(() => { k.setMode("code"); useEditor.getState().setView("scm") })}>
+              <GitBranch /> Source control <CommandShortcut>⌃⇧G</CommandShortcut>
+            </CommandItem>
+            <CommandItem value="agent ai task" onSelect={() => run(() => { useAgent.getState().setMode("agent"); k.setContextTab("ai"); useUi.getState().openRight() })}>
+              <Bot /> Give the agent a task
+            </CommandItem>
+            <CommandItem value="new terminal" onSelect={() => run(() => { useTerminals.getState().newTab(); k.setBottomTab("terminal"); useUi.setState((s) => ({ bottomOpenTick: s.bottomOpenTick + 1 })) })}>
+              <SquareTerminal /> New terminal
             </CommandItem>
           </CommandGroup>
           <CommandSeparator />
@@ -211,6 +212,37 @@ export function CommandMenu() {
               <Sparkles /> Getting started
             </CommandItem>
           </CommandGroup>
+          {q.trim().length > 3 && (
+            <CommandGroup heading="Natural language" forceMount>
+              {k.discipline === "software" ? (
+                <CommandItem forceMount value="__nl-build" onSelect={() => run(() => understand(q))}>
+                  <Wand2 />
+                  Build: <span className="truncate text-muted-foreground">{q}</span>
+                  <CommandShortcut>↵</CommandShortcut>
+                </CommandItem>
+              ) : (
+                // Building services is Software's flow; elsewhere the question is asked in the workspace's context.
+                <CommandItem forceMount value="__nl-wsask" onSelect={() => run(() => askInWorkspace(workspace(k.discipline), q))}>
+                  <MessageSquare />
+                  Ask in {workspace(k.discipline).label}: <span className="truncate text-muted-foreground">{q}</span>
+                  <CommandShortcut>↵</CommandShortcut>
+                </CommandItem>
+              )}
+              <CommandItem
+                forceMount
+                value="__nl-ask"
+                onSelect={() =>
+                  run(() => {
+                    k.select(k.selection, "ai")
+                    ask(q, k.selection)
+                  })
+                }
+              >
+                <MessageSquare />
+                Ask Kivo: <span className="truncate text-muted-foreground">{q}</span>
+              </CommandItem>
+            </CommandGroup>
+          )}
         </CommandList>
       </Command>
     </CommandDialog>

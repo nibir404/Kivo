@@ -378,9 +378,16 @@ function NameInput({ initial, selectStem, onSubmit, onCancel }: { initial: strin
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    el.focus()
     const dot = initial.lastIndexOf(".")
-    el.setSelectionRange(0, selectStem && dot > 0 ? dot : initial.length)
+    const focus = () => {
+      if (document.activeElement === el) return
+      el.focus()
+      el.setSelectionRange(0, selectStem && dot > 0 ? dot : initial.length)
+    }
+    focus()
+    // Opened from a context menu, whose focus trap holds focus until its exit animation ends.
+    const timers = [50, 150, 300].map((ms) => setTimeout(focus, ms))
+    return () => timers.forEach(clearTimeout)
   }, [initial, selectStem])
 
   const commit = () => {
@@ -411,7 +418,11 @@ function NameInput({ initial, selectStem, onSubmit, onCancel }: { initial: strin
             onCancel()
           }
         }}
-        onBlur={commit}
+        onBlur={(e) => {
+          // Focus pulled back by the closing menu isn't the user clicking away.
+          if ((e.relatedTarget as Element | null)?.closest('[role="menu"]')) return
+          commit()
+        }}
         className="h-5 w-full rounded-sm border border-ring bg-background px-1 font-mono text-[12px] outline-none aria-invalid:border-destructive"
       />
       {error && <div className="absolute top-full right-0 left-0 z-10 rounded-b-sm bg-destructive px-1.5 py-0.5 font-sans text-[11px] text-white">{error}</div>}

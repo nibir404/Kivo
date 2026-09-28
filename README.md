@@ -62,9 +62,9 @@ npm run check     # full verification (typecheck + lint + tests)
 | **Radical Honesty** | A service is marked **running** only when lint is clean and 100% of tests pass. Failing services boot "for inspection" with live failure logs exposed. |
 | **Git & Source Control (SCM)** | Complete in-app Git GUI powered by Git Porcelain v2: stage/unstage files, view unified and split diffs, generate AI commit messages grounded in staged diffs, switch/create branches, publish upstream, push, and pull. Safe discard sends files to OS Trash. |
 | **Autonomous Coding Agent** | Multi-turn tool-calling loop (`list_files`, `read_file`, `search`, `edit_file`, `run_command` with user approval checkpoints). Path traversal protection, `.git` write guards, and inline ghost-text code autocomplete. |
-| **Multi-Project Manager** | Open any local directory or clone external Git repositories into Kivo. Switch between the managed demo and real-world repositories with persistent recent history. |
-| **Advanced Code Editor** | CodeMirror 6 with syntax support for Python, TS, TSX, JS, SQL, Markdown, YAML, and JSON. Multi-tab management, project-wide fast search (ripgrep / git grep / JS fallback), document symbol hierarchy, and inline ⌘K diff edits. |
-| **Persistent Terminals** | Real login shells (`node-pty` over WebSocket). Terminal sessions live in the daemon, surviving browser refreshes and tab closures with scrollback replay. GPU-accelerated WebGL rendering. |
+| **Your Projects** | Open any folder on your machine (`⌘O`: native Finder picker or an in-app folder browser) or clone a repository (`owner/repo`, HTTPS or SSH URL) with your own git credentials. Recent projects are remembered. Your projects are never auto-committed and use your git identity and tools; only the built-in demo is Kivo-managed. |
+| **Code Editor** | CodeMirror 6 with Python, TS/JS, Go, Rust, Java, C/C++, CSS, HTML, PHP, SQL, Markdown, YAML, JSON and more. Explorer with new/rename/move (drag & drop)/duplicate/delete-to-Trash; Quick Open (`⌘P`), go to line/symbol; find & replace across files (ripgrep → git grep → JS scan); multi-cursor; breadcrumbs; live reload when files change on disk, with a conflict bar for unsaved edits; inline `⌘K` AI edits and Tab autocomplete. |
+| **Terminal** | Your real login shell (`node-pty` over WebSocket) with full access to your machine, opening in the current project (or your home folder from the `+` menu). Sessions live in the daemon and survive refreshes, with scrollback replay, search, clickable links and WebGL rendering. |
 | **Interactive API Client** | Automatically parses OpenAPI schemas from running services, providing an in-app test bench with captured JWT session reuse. |
 | **Evergreen Codebase Memory** | Persistent architectural memory (`docs/MEMORY.md`) maintained automatically via the `codebase-memory` skill before every git push. |
 
@@ -126,7 +126,7 @@ Kivo is designed with defense-in-depth security invariants:
 1. **Loopback & Origin Protection**: The daemon binds strictly to `127.0.0.1` and drops any HTTP or WebSocket request from origins other than the Kivo UI (`localhost:5174`, `127.0.0.1:5174`, `localhost:4173`).
 2. **DNS Rebinding Shield**: Only requests with loopback `Host` headers (`localhost`, `127.0.0.1`) are answered.
 3. **Workspace Confinement**: All file reads, writes, and searches pass through `resolveIn()` / `safePath()`. Path traversal attempts (`../`), symlink escapes, and modifications to `.git/` are strictly blocked.
-4. **Environment Isolation**: API keys exist only in daemon memory from `.env` (git-ignored) and are stripped from terminal shells and child processes. Code runs with an allowlisted environment to prevent exfiltration of `AWS_*`, `GITHUB_TOKEN`, or `SSH_AUTH_SOCK`.
+4. **Kivo's Keys Stay in the Daemon**: Kivo's AI provider keys are read from `.env` (git-ignored) and removed from the environment of terminals, builds and agent commands. Your own environment (SSH agent, `gh` login, PATH) is kept, so git and your tools work as they do in any terminal. The terminal is a real shell with your user's permissions; the agent's commands run only after you approve each one.
 5. **Supply Chain Safeguard**: Automated `pip install` only installs vetted packages. Unknown dependencies halt the build and require explicit approval in `KIVO_EXTRA_PACKAGES`.
 6. **Destructive Action Protection**: Discarding files in SCM or deleting files in the explorer moves them to the operating system's Trash (`~/.Trash` on macOS, `.local/share/Trash` on Linux) rather than permanently deleting them.
 
@@ -151,7 +151,12 @@ Kivo includes a built-in context preservation workflow powered by the `codebase-
 | `⌘J` | Toggle Terminal panel |
 | `⌘I` | Toggle Context panel |
 | `⌘S` | Save current file |
-| `⌘P` | Quick Open file palette |
+| `⌘P` | Quick Open (`:` line, `@` symbol) |
+| `⌘O` | Open a folder |
+| `⌘⇧F` | Find / replace in files |
+| `⌘⇧E` / `⌃⇧G` | Explorer / Source Control |
+| `⌘⇧O` / `⌃G` | Go to symbol / line |
+| `Tab` | Accept AI autocomplete |
 | `⌘,` | Open Preferences |
 | `?` | Show all keyboard shortcuts |
 
