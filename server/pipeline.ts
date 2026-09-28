@@ -10,7 +10,7 @@ import { CODEGEN_SYSTEM, codegenUser, REPAIR_SYSTEM, repairUser } from "./prompt
 import { bus } from "./bus"
 import { PY_SCAFFOLD } from "./scaffold"
 import { toolchainStatus } from "./toolchains"
-import { git, PROJECT_DIR, VENV, WORKSPACES, writeFile } from "./workspace"
+import { git, isGitRepo, project, projectDir, VENV, WORKSPACES, writeFile } from "./workspace"
 
 /**
  * The build pipeline. AI steps write real files; deterministic steps run real tools.
@@ -32,6 +32,14 @@ const urls = new Map<string, string>()
 /** Services with a build in progress — a second build of the same service is refused, not interleaved. */
 const building = new Set<string>()
 
+/** Builds of different services share one venv and one git index; these sections run one at a time. */
+let exclusiveTail: Promise<unknown> = Promise.resolve()
+function exclusive<T>(fn: () => Promise<T>): Promise<T> {
+  const run = exclusiveTail.then(fn, fn)
+  exclusiveTail = run.catch(() => {})
+  return run
+}
+
 /** Stop every service process Kivo started. Called on daemon shutdown so no orphans hold ports. */
 export function stopAll() {
   for (const p of running.values()) if (p.exitCode === null) p.kill()
@@ -40,6 +48,7 @@ export function stopAll() {
 process.on("exit", stopAll)
 
 export const isBuilding = (id: string) => building.has(id)
+export const anyBuilding = () => building.size > 0
 
 /** Cap captured tool output so a chatty process can't exhaust memory. */
 const MAX_OUTPUT = 1_000_000
@@ -55,14 +64,15 @@ export async function runBuild(spec: ServiceSpec, emit: (e: BuildEvent) => void,
     emit({ t: "error", message: `${spec.name} is already being built — wait for that build to finish.` })
     return
   }
-  // Preflight: never spend AI calls on a build this machine can't finish.
-  const toolchain = await toolchainStatus(spec.implementation.language, true)
-  if (!toolchain.ok) {
-    emit({ t: "error", message: toolchain.message ?? "This language can't be built here." })
-    return
-  }
+  // Claim the slot before the first await, so two requests racing for the same service can't both start.
   building.add(spec.id)
   try {
+    // Preflight: never spend AI calls on a build this machine can't finish.
+    const toolchain = await toolchainStatus(spec.implementation.language, true)
+    if (!toolchain.ok) {
+      emit({ t: "error", message: toolchain.message ?? "This language can't be built here." })
+      return
+    }
     await build(spec, emit, signal)
   } finally {
     building.delete(spec.id)
@@ -72,6 +82,7 @@ export async function runBuild(spec: ServiceSpec, emit: (e: BuildEvent) => void,
 async function build(spec: ServiceSpec, emit: (e: BuildEvent) => void, signal: AbortSignal) {
   const steps = planFor(spec)
   const serviceRel = `services/${spec.id}`
+  const PROJECT_DIR = projectDir()
   const serviceDir = path.join(PROJECT_DIR, serviceRel)
   const py = spec.implementation.language === "python"
   const written: Record<string, string> = {}
@@ -121,13 +132,22 @@ async function build(spec: ServiceSpec, emit: (e: BuildEvent) => void, signal: A
   }
 
   let commit: string | undefined
-  try {
-    await git(["add", "-A"])
-    await git(["commit", "-q", "-m", `${ok ? "feat" : "wip"}(${spec.id}): ${spec.intent.slice(0, 72)}`])
-    commit = (await git(["rev-parse", "--short", "HEAD"])).stdout.trim()
-  } catch {
-    // nothing to commit
-  }
+  await exclusive(async () => {
+    // Kivo commits only in its own demo project; in the user's repo the changes are left for them to review.
+    if (!project().managed || !isGitRepo()) return
+    try {
+      // Only this service's files — another build may be writing its own right now.
+      await git(["add", "-A", "--", serviceRel])
+      const staged = await git(["diff", "--cached", "--quiet"]).then(
+        () => false,
+        () => true,
+      )
+      if (staged) await git(["commit", "-q", "-m", `${ok ? "feat" : "wip"}(${spec.id}): ${spec.intent.slice(0, 72)}`])
+      commit = (await git(["rev-parse", "--short", "HEAD"])).stdout.trim()
+    } catch (err) {
+      log("boot", `! couldn't record this build in git: ${(err as Error).message.split("\n")[0]}`)
+    }
+  })
   emit({ t: "done", ok, commit })
 
   async function runStep(step: PlanStep): Promise<string | undefined> {
@@ -279,15 +299,25 @@ async function build(spec: ServiceSpec, emit: (e: BuildEvent) => void, signal: A
   }
 
   async function install(id: string) {
-    const reqs = deriveRequirements(written, serviceDir)
+    const { packages: reqs, unknown } = deriveRequirements(written, serviceDir)
+    if (unknown.length) {
+      unknown.forEach((m) => log(id, `✗ import ${m}: not a package Kivo knows`))
+      throw new Error(
+        `The generated code imports ${unknown.map((m) => `"${m}"`).join(", ")}, which ${unknown.length === 1 ? "isn't a package" : "aren't packages"} Kivo installs automatically. ` +
+          `Installing unknown names from PyPI could run a look-alike package. If you trust ${unknown.length === 1 ? "it" : "them"}, add ${unknown.length === 1 ? "it" : "them"} to KIVO_EXTRA_PACKAGES in .env and rebuild.`,
+      )
+    }
     save(id, "requirements.txt", reqs.join("\n") + "\n")
     save(id, "pytest.ini", "[pytest]\npythonpath = .\ntestpaths = tests\n")
-    if (!fs.existsSync(path.join(VENV, "bin", "python"))) {
-      await sh(id, "python3", ["-m", "venv", VENV], PROJECT_DIR)
-      await sh(id, path.join(VENV, "bin", "pip"), ["install", "-q", "--disable-pip-version-check", "-U", "pip", "pyflakes"], PROJECT_DIR)
-    }
-    if (!fs.existsSync(path.join(VENV, "bin", "pyflakes"))) await sh(id, path.join(VENV, "bin", "pip"), ["install", "-q", "--disable-pip-version-check", "pyflakes"], PROJECT_DIR)
-    const r = await sh(id, path.join(VENV, "bin", "pip"), ["install", "--disable-pip-version-check", "--progress-bar", "off", "-r", "requirements.txt"], serviceDir)
+    const r = await exclusive(async () => {
+      if (!fs.existsSync(path.join(VENV, "bin", "python"))) {
+        const v = await sh(id, "python3", ["-m", "venv", VENV], PROJECT_DIR)
+        if (v.code !== 0) throw new Error("Couldn't create the Python virtual environment")
+        await sh(id, path.join(VENV, "bin", "pip"), ["install", "-q", "--disable-pip-version-check", "-U", "pip", "pyflakes"], PROJECT_DIR)
+      }
+      if (!fs.existsSync(path.join(VENV, "bin", "pyflakes"))) await sh(id, path.join(VENV, "bin", "pip"), ["install", "-q", "--disable-pip-version-check", "pyflakes"], PROJECT_DIR)
+      return sh(id, path.join(VENV, "bin", "pip"), ["install", "--disable-pip-version-check", "--progress-bar", "off", "-r", "requirements.txt"], serviceDir)
+    })
     if (r.code !== 0) throw new Error("pip install failed")
     return `${reqs.length} packages installed from imports found in the generated code.`
   }
@@ -335,20 +365,23 @@ async function build(spec: ServiceSpec, emit: (e: BuildEvent) => void, signal: A
     log(id, `$ uvicorn main:app --port ${port}`)
     const proc = spawn(path.join(VENV, "bin", "python"), ["-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", String(port)], {
       cwd: serviceDir,
-      env: cleanEnv(),
+      env: sandboxEnv(),
     })
     let spawnError: Error | undefined
     proc.on("error", (err) => (spawnError = err))
     running.set(spec.id, proc)
     urls.set(spec.id, `http://127.0.0.1:${port}`)
-    const forward = (b: Buffer) =>
-      b
-        .toString()
-        .split("\n")
-        .filter(Boolean)
-        .forEach((line) => bus.emit("event", { t: "service-log", service: spec.id, line }))
-    proc.stdout.on("data", forward)
-    proc.stderr.on("data", forward)
+    // Chunks don't end on line boundaries; carry the partial line over so tracebacks stay whole.
+    const lineForwarder = () => {
+      let rest = ""
+      return (b: Buffer) => {
+        const lines = (rest + b.toString()).split("\n")
+        rest = lines.pop()!.slice(-8192)
+        for (const line of lines) if (line) bus.emit("event", { t: "service-log", service: spec.id, line })
+      }
+    }
+    proc.stdout.on("data", lineForwarder())
+    proc.stderr.on("data", lineForwarder())
     const url = `http://127.0.0.1:${port}`
     for (let i = 0; i < 60; i++) {
       if (spawnError) throw new Error(`Couldn't start the service: ${spawnError.message}`)
@@ -381,7 +414,7 @@ async function build(spec: ServiceSpec, emit: (e: BuildEvent) => void, signal: A
     const shown = (a: string) => a.replace(PROJECT_DIR, ".").replace(WORKSPACES, "~kivo")
     log(id, `$ ${path.basename(cmd)} ${args.map((a) => (a.includes(" ") ? `"${shown(a)}"` : shown(a))).join(" ")}`)
     return new Promise<{ code: number; output: string }>((resolve) => {
-      const p = spawn(cmd, args, { cwd, env: cleanEnv() })
+      const p = spawn(cmd, args, { cwd, env: sandboxEnv() })
       let output = ""
       const timer = setTimeout(() => p.kill(), timeout)
       const onData = (b: Buffer) => {
@@ -392,7 +425,8 @@ async function build(spec: ServiceSpec, emit: (e: BuildEvent) => void, signal: A
       p.stdout.on("data", onData)
       p.stderr.on("data", onData)
       const abort = () => p.kill()
-      signal.addEventListener("abort", abort, { once: true })
+      if (signal.aborted) abort()
+      else signal.addEventListener("abort", abort, { once: true })
       let settled = false
       const finish = (code: number, extra = "") => {
         if (settled) return
@@ -411,6 +445,19 @@ async function build(spec: ServiceSpec, emit: (e: BuildEvent) => void, signal: A
   }
 }
 
+/**
+ * Environment for AI-written code and the packages it installs: an allowlist, so tokens the user
+ * has exported (AWS_*, GITHUB_TOKEN, SSH_AUTH_SOCK…) never reach code nobody has reviewed yet.
+ */
+const SANDBOX_ENV = /^(PATH|HOME|USER|LOGNAME|SHELL|LANG|LC_\w+|TZ|TMPDIR|TEMP|TMP|SYSTEMROOT|COMSPEC|PATHEXT|VIRTUAL_ENV|PYTHON\w*|PIP_\w+|UV_\w+|SSL_CERT_\w+|REQUESTS_CA_BUNDLE|HTTPS?_PROXY|NO_PROXY|https?_proxy|no_proxy|__CF_USER_TEXT_ENCODING)$/
+export function sandboxEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const [k, v] of Object.entries(process.env)) if (SANDBOX_ENV.test(k)) env[k] = v
+  for (const k of SECRET_ENV) delete env[k]
+  return { ...env, PYTHONDONTWRITEBYTECODE: "1", PYTHONUNBUFFERED: "1", NO_COLOR: "1" }
+}
+
+/** Environment for the user's own terminal: theirs, minus Kivo's provider keys and npm's leaked config. */
 export function cleanEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONUNBUFFERED: "1", NO_COLOR: "1" }
   delete env.FORCE_COLOR
@@ -477,23 +524,51 @@ const PACKAGE_FOR: Record<string, string> = {
   asyncpg: "asyncpg",
   fakeredis: "fakeredis",
   pydantic_settings: "pydantic-settings",
+  starlette: "starlette",
+  jose: "python-jose[cryptography]",
+  cryptography: "cryptography",
+  argon2: "argon2-cffi",
+  requests: "requests",
+  yaml: "PyYAML",
+  dateutil: "python-dateutil",
+  pytest_asyncio: "pytest-asyncio",
+  anyio: "anyio",
+  sqlmodel: "sqlmodel",
+  alembic: "alembic",
+  pyotp: "pyotp",
+  slugify: "python-slugify",
+}
+
+/** Packages the user has vetted themselves (KIVO_EXTRA_PACKAGES=name,name==1.2). Keys are import names. */
+function extraPackages(): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const spec of (process.env.KIVO_EXTRA_PACKAGES ?? "").split(",").map((x) => x.trim()).filter(Boolean)) {
+    const name = spec.split(/[=<>!~\[;\s]/)[0]
+    if (/^[A-Za-z0-9][\w.-]*$/.test(name)) out[name.replace(/-/g, "_").toLowerCase()] = spec
+  }
+  return out
 }
 
 
 /** Deterministic: requirements come from what the code imports, never from model output. */
-function deriveRequirements(files: Record<string, string>, serviceDir: string) {
+export function deriveRequirements(files: Record<string, string>, serviceDir: string) {
   const local = new Set(Object.keys(files).map((f) => path.basename(f, ".py")))
   for (const f of fs.existsSync(serviceDir) ? fs.readdirSync(serviceDir) : []) local.add(path.basename(f, ".py"))
   const pkgs = new Set(["fastapi", "uvicorn", "httpx", "pytest"])
+  const unknown = new Set<string>()
+  const known = { ...PACKAGE_FOR, ...extraPackages() }
   const code = Object.values(files).join("\n")
   for (const m of code.matchAll(/^\s*(?:from|import)\s+([A-Za-z_]\w*)/gm)) {
     const mod = m[1]
     if (STDLIB.has(mod) || local.has(mod) || mod === "tests" || mod === "conftest") continue
-    pkgs.add(PACKAGE_FOR[mod] ?? mod)
+    // Only names Kivo (or the user) vouches for are installed — a hallucinated import is never fetched from PyPI.
+    const pkg = known[mod] ?? known[mod.toLowerCase()]
+    if (pkg) pkgs.add(pkg)
+    else unknown.add(mod)
   }
   if (/EmailStr/.test(code)) pkgs.add("email-validator")
   if (/\bForm\(|UploadFile/.test(code)) pkgs.add("python-multipart")
-  return [...pkgs].sort()
+  return { packages: [...pkgs].sort(), unknown: [...unknown].sort() }
 }
 
 function freePort() {
@@ -588,7 +663,8 @@ export function parseEdits(text: string) {
 
 /** Exact match first, then a whitespace-tolerant line match (models often drift on indentation of blank lines). */
 export function applyEdit(content: string, search: string, replace: string): string | null {
-  if (content.includes(search)) return content.replace(search, replace)
+  // A function replacement, so "$&", "$'" etc. in code (regexes!) are inserted literally.
+  if (content.includes(search)) return content.replace(search, () => replace)
   const norm = (l: string) => l.trimEnd()
   const lines = content.split("\n")
   const target = search.split("\n").map(norm)

@@ -38,6 +38,8 @@ import { ask, openFile, understand } from "@/state/runners"
 import { useKivo } from "@/state/store"
 import { useCaptureActions } from "./capture"
 import { startNewService } from "./Preferences"
+import { askInWorkspace } from "@/features/workspace/hooks"
+import { workspace, WORKSPACES } from "@/features/workspace/registry"
 import { LEVELS, MODES } from "./TopBar"
 
 /** Universal command interface. Unmatched input is treated as natural language: build it, or ask about it. */
@@ -71,11 +73,20 @@ export function CommandMenu() {
           {q.trim().length <= 3 && <CommandEmpty>No command matches.</CommandEmpty>}
           {q.trim().length > 3 && (
             <CommandGroup heading="Natural language" forceMount>
-              <CommandItem forceMount value={`__build ${q}`} onSelect={() => run(() => understand(q))}>
-                <Wand2 />
-                Build: <span className="truncate text-muted-foreground">{q}</span>
-                <CommandShortcut>↵</CommandShortcut>
-              </CommandItem>
+              {k.discipline === "software" ? (
+                <CommandItem forceMount value={`__build ${q}`} onSelect={() => run(() => understand(q))}>
+                  <Wand2 />
+                  Build: <span className="truncate text-muted-foreground">{q}</span>
+                  <CommandShortcut>↵</CommandShortcut>
+                </CommandItem>
+              ) : (
+                // Building services is Software's flow; elsewhere the question is asked in the workspace's context.
+                <CommandItem forceMount value={`__wsask ${q}`} onSelect={() => run(() => askInWorkspace(workspace(k.discipline), q))}>
+                  <MessageSquare />
+                  Ask in {workspace(k.discipline).label}: <span className="truncate text-muted-foreground">{q}</span>
+                  <CommandShortcut>↵</CommandShortcut>
+                </CommandItem>
+              )}
               <CommandItem
                 forceMount
                 value={`__ask ${q}`}
@@ -164,6 +175,21 @@ export function CommandMenu() {
                 <CommandShortcut>⌘{m.key}</CommandShortcut>
               </CommandItem>
             ))}
+          </CommandGroup>
+          <CommandGroup heading="Workspace">
+            {WORKSPACES.map((w) => (
+              <CommandItem key={w.id} value={`workspace ${w.label}`} onSelect={() => run(() => k.setDiscipline(w.id))}>
+                <w.icon /> {w.label}
+                {k.discipline === w.id && <Check className="ml-auto" />}
+              </CommandItem>
+            ))}
+            {k.discipline !== "software" &&
+              workspace(k.discipline).sections.map((sec) => (
+                <CommandItem key={sec.id} value={`section ${workspace(k.discipline).label} ${sec.label}`} onSelect={() => run(() => k.openWorkspaceSection(sec.id))}>
+                  <sec.icon /> {sec.label}
+                  <CommandShortcut>{workspace(k.discipline).label}</CommandShortcut>
+                </CommandItem>
+              ))}
           </CommandGroup>
           <CommandGroup heading="Preferences">
             <CommandItem onSelect={() => run(() => setTheme(resolvedTheme === "dark" ? "light" : "dark"))}>

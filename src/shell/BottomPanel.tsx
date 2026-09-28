@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useEffect, useRef, useState } from "react"
 import { GitBranch } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -6,9 +6,12 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
 import { useKivo } from "@/state/store"
-import { Terminal as Shell } from "./Terminal"
 import { StatusDot } from "./bits"
 import { Capturable, CaptureScope } from "./capture"
+
+// xterm.js is large; it loads with the first render of the bottom panel's terminal, not with the app.
+const TerminalPanel = lazy(() => import("./terminal/TerminalPanel").then((m) => ({ default: m.TerminalPanel })))
+const TerminalToolbar = lazy(() => import("./terminal/TerminalPanel").then((m) => ({ default: m.TerminalToolbar })))
 
 export function BottomPanel() {
   const { bottomTab, setBottomTab, logs } = useKivo()
@@ -30,11 +33,18 @@ export function BottomPanel() {
             ))}
           </TabsList>
         </Tabs>
+        {bottomTab === "terminal" && (
+          <Suspense fallback={null}>
+            <TerminalToolbar />
+          </Suspense>
+        )}
       </div>
       <div className="min-h-0 flex-1">
-        {/* The shell stays mounted so the session survives tab switches. */}
+        {/* Shells stay mounted (and live on the daemon) so sessions survive tab switches and reloads. */}
         <div className={cn("h-full", bottomTab !== "terminal" && "hidden")}>
-          <Shell visible={bottomTab === "terminal"} />
+          <Suspense fallback={<div className="p-3 font-mono text-[12px] text-muted-foreground">Starting terminal…</div>}>
+            <TerminalPanel visible={bottomTab === "terminal"} />
+          </Suspense>
         </div>
         {bottomTab === "output" && <Output />}
         {bottomTab === "runtime" && <RuntimeStream />}

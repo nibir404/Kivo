@@ -1,5 +1,6 @@
+import { useState } from "react"
 import { useTheme } from "next-themes"
-import { ChevronsUpDown, FolderTree, Keyboard, LayoutTemplate, Library, Monitor, Moon, Network, PanelLeft, PanelRight, RefreshCw, Search, Settings, Sparkles, SquareTerminal, Sun } from "lucide-react"
+import { ChevronsUpDown, Folder, FolderGit2, FolderOpen, FolderTree, GitBranch, Keyboard, Library, X, Monitor, Moon, Network, PanelLeft, PanelRight, RefreshCw, Search, Settings, Sparkles, SquareTerminal, Sun } from "lucide-react"
 import { toast } from "sonner"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -21,10 +22,13 @@ import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import type { Level, Mode } from "@/core/types"
 import { cn } from "@/lib/utils"
-import { refreshFiles } from "@/state/runners"
+import { api } from "@/lib/api"
+import { refreshFiles, switchToProject } from "@/state/runners"
 import { useKivo } from "@/state/store"
+import { workspace } from "@/features/workspace/registry"
 import { useUi } from "./capture"
 import { ProviderMenu } from "./ProviderMenu"
+import { shortPath, useRecentProjects } from "./projects/ProjectDialogs"
 
 export const MODES: { id: Mode; label: string; key: string; hint: string }[] = [
   { id: "build", label: "Build", key: "1", hint: "Describe and build services" },
@@ -51,7 +55,9 @@ export function KivoMark({ className }: { className?: string }) {
 }
 
 export function TopBar({ compact = false, onToggleLeft, onToggleRight }: { compact?: boolean; onToggleLeft?: () => void; onToggleRight?: () => void }) {
-  const { mode, setMode, setCommandOpen } = useKivo()
+  const { mode, setMode, setCommandOpen, discipline } = useKivo()
+  // The first mode speaks the workspace's language: Build, Train, Assess, Operate…
+  const primary = workspace(discipline).primaryMode
 
   const modeTabs = (
     <nav className={cn("flex items-center gap-0.5", compact ? "min-w-0 flex-1 overflow-x-auto [scrollbar-width:none]" : "ml-1")} aria-label="Modes">
@@ -64,7 +70,7 @@ export function TopBar({ compact = false, onToggleLeft, onToggleRight }: { compa
               aria-current={mode === m.id ? "page" : undefined}
               className="relative h-11 shrink-0 px-2.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground data-active:text-foreground"
             >
-              {m.label}
+              {m.id === "build" ? primary : m.label}
               <span className={cn("absolute inset-x-2.5 -bottom-px h-px origin-center bg-foreground transition-transform duration-200", mode === m.id ? "scale-x-100" : "scale-x-0")} />
             </button>
           </TooltipTrigger>
@@ -128,40 +134,80 @@ export function TopBar({ compact = false, onToggleLeft, onToggleRight }: { compa
 }
 
 function ProjectMenu() {
-  const { project, analysis, setMode, openService, discardDraft, daemon, files } = useKivo()
+  const { project, projectInfo, analysis, setMode, daemon, files } = useKivo()
   const runInTerminal = useUi((s) => s.runInTerminal)
+  const setProjectDialog = useUi((s) => s.setProjectDialog)
+  const [open, setOpen] = useState(false)
+  const [recent, setRecent] = useRecentProjects(open)
+  const others = recent.filter((p) => p.id !== projectInfo?.id).slice(0, 8)
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-1.5 font-normal">
+        <Button variant="ghost" size="sm" className="gap-1.5 font-normal" title={projectInfo?.dir}>
           <span className="font-medium">{project}</span>
           <span className="hidden text-muted-foreground xl:inline">{analysis.summary}</span>
           <ChevronsUpDown className="text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-64">
+      <DropdownMenuContent align="start" className="w-80">
         <DropdownMenuLabel className="font-normal">
-          <div className="text-sm font-medium">{project}</div>
+          <div className="flex items-center gap-1.5 text-sm font-medium">
+            {project}
+            {projectInfo?.kind === "demo" && <span className="rounded border px-1 text-[10px] font-normal text-muted-foreground">demo</span>}
+          </div>
+          {projectInfo && <div className="truncate font-mono text-[11px] text-muted-foreground">{shortPath(projectInfo.dir)}</div>}
           <div className="text-xs text-muted-foreground">
-            {analysis.summary} · {files.length} files
+            {analysis.summary} · {files.length} files{projectInfo?.remote ? ` · ${projectInfo.remote.replace(/^https:\/\/|\.git$/g, "")}` : ""}
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onSelect={() => {
-            discardDraft()
-            openService(null)
-          }}
-        >
-          <LayoutTemplate /> Project overview
+        <DropdownMenuItem disabled={!daemon} onSelect={() => setProjectDialog("open")}>
+          <FolderOpen /> Open folder…
+          <DropdownMenuShortcut>⌘O</DropdownMenuShortcut>
         </DropdownMenuItem>
+        <DropdownMenuItem disabled={!daemon} onSelect={() => setProjectDialog("clone")}>
+          <GitBranch /> Clone repository…
+        </DropdownMenuItem>
+        {others.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground">Recent</DropdownMenuLabel>
+            {others.map((p) => (
+              <DropdownMenuItem key={p.id} onSelect={() => switchToProject(p.id)} className="group">
+                {p.kind === "git" ? <FolderGit2 /> : <Folder />}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{p.name}</span>
+                  <span className="block truncate font-mono text-[10.5px] text-muted-foreground">{p.kind === "demo" ? "Kivo demo project" : shortPath(p.dir)}</span>
+                </span>
+                {p.kind !== "demo" && (
+                  <button
+                    aria-label={`Remove ${p.name} from recent projects`}
+                    title="Remove from list (the folder stays on disk)"
+                    className="rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-background"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      api
+                        .forgetProject(p.id)
+                        .then(() => setRecent((l) => l.filter((x) => x.id !== p.id)))
+                        .catch((err) => toast.error(String(err.message)))
+                    }}
+                  >
+                    <X className="size-3" />
+                  </button>
+                )}
+              </DropdownMenuItem>
+            ))}
+          </>
+        )}
+        <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => setMode("learn")}>
           <Network /> Architecture
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => setMode("code")}>
           <FolderTree /> Browse files
         </DropdownMenuItem>
-        <DropdownMenuSeparator />
         <DropdownMenuItem disabled={!daemon} onSelect={() => runInTerminal("git status")}>
           <SquareTerminal /> Git status in terminal
         </DropdownMenuItem>

@@ -1,42 +1,41 @@
 import { useState } from "react"
-import { ChevronRight, FileCode2, Folder, Plus, ShieldCheck } from "lucide-react"
+import { ChevronRight, FileCode2, Folder, LayoutDashboard, Plus, ShieldCheck } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { Discipline } from "@/core/types"
+import { useSections, useWsContext } from "@/features/workspace/hooks"
+import type { WorkspaceDef } from "@/features/workspace/model"
+import { workspace, WORKSPACES } from "@/features/workspace/registry"
+import { CodeSidebar, EditorGlobal } from "@/features/editor/Sidebar"
 import { cn } from "@/lib/utils"
 import { openFile } from "@/state/runners"
 import { useKivo } from "@/state/store"
 import { KindIcon, StatusDot } from "./bits"
 import { Capturable } from "./capture"
 
-export const DISCIPLINES: { id: Discipline; label: string; sections: string[] }[] = [
-  { id: "software", label: "Software", sections: [] },
-  { id: "ml", label: "AI / ML", sections: ["Datasets", "Experiments", "Models", "Training", "GPU", "Metrics", "Evaluation", "Pipelines"] },
-  { id: "rl", label: "Reinforcement Learning", sections: ["Environment", "Agent", "Policy", "State", "Action", "Reward", "Episodes", "Training", "Evaluation"] },
-  { id: "security", label: "Cybersecurity", sections: ["Targets", "Assets", "Attack Surface", "Threat Model", "Vulnerabilities", "Security Tests", "Findings", "Remediation", "Sandbox"] },
-  { id: "devops", label: "DevOps / SRE", sections: ["Services", "Containers", "Kubernetes", "Deployments", "Logs", "Metrics", "Traces", "Incidents"] },
-]
-
 export function Navigator() {
-  const { discipline, setDiscipline, analysis } = useKivo()
-  const def = DISCIPLINES.find((d) => d.id === discipline)!
+  const { discipline, setDiscipline, analysis, mode } = useKivo()
+  const def = workspace(discipline)
 
   return (
     <div className="flex h-full flex-col bg-sidebar">
       <div className="border-b p-2">
         <Select value={discipline} onValueChange={(v) => setDiscipline(v as Discipline)}>
-          <SelectTrigger size="sm" className="w-full text-[13px]">
-            <span className="text-muted-foreground">Workspace</span>
+          <SelectTrigger size="sm" className="w-full text-[13px]" aria-label="Workspace">
+            <span className="ws-tint flex size-5 shrink-0 items-center justify-center rounded-md">
+              <def.icon className="size-3" />
+            </span>
             <SelectValue>{def.label}</SelectValue>
           </SelectTrigger>
           <SelectContent>
-            {DISCIPLINES.map((d) => (
-              <SelectItem key={d.id} value={d.id}>
-                {d.label}
-                {analysis.recommended.includes(d.id) && (
+            {WORKSPACES.map((w) => (
+              <SelectItem key={w.id} value={w.id}>
+                <w.icon className="size-3.5 text-muted-foreground" />
+                {w.label}
+                {analysis.recommended.includes(w.id) && w.id !== "software" && (
                   <Badge variant="secondary" className="ml-1 h-4 px-1.5 text-[10px]">
                     detected
                   </Badge>
@@ -46,11 +45,14 @@ export function Navigator() {
           </SelectContent>
         </Select>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-4 p-2">
-          {discipline === "software" ? <SoftwareSections /> : <DisciplineSections sections={def.sections} discipline={discipline} />}
-        </div>
-      </ScrollArea>
+      {mode === "code" ? (
+        <CodeSidebar />
+      ) : (
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="space-y-4 p-2">{discipline === "software" ? <SoftwareSections /> : <WorkspaceSections def={def} />}</div>
+        </ScrollArea>
+      )}
+      <EditorGlobal />
     </div>
   )
 }
@@ -84,16 +86,8 @@ function Row({ children, active, onClick }: { children: React.ReactNode; active?
 }
 
 function SoftwareSections() {
-  const { services, nodes, activeServiceId, openService, draft, discardDraft, build, mode, files } = useKivo()
+  const { services, nodes, activeServiceId, openService, draft, discardDraft, build } = useKivo()
   const infra = nodes.filter((n) => n.kind !== "service")
-
-  if (mode === "code") {
-    return (
-      <Group title={`Explorer · ${files.length} files`}>
-        <FileTree />
-      </Group>
-    )
-  }
 
   return (
     <>
@@ -214,27 +208,41 @@ function TreeItem({ node, depth }: { node: TreeNode; depth: number }) {
   )
 }
 
-function DisciplineSections({ sections, discipline }: { sections: string[]; discipline: Discipline }) {
+function WorkspaceSections({ def }: { def: WorkspaceDef }) {
+  const ctx = useWsContext()
+  const sections = useSections(def, ctx)
+  const { workspaceSection, openWorkspaceSection, mode } = useKivo()
+  const onHome = mode === "build"
   return (
     <>
-      {discipline === "security" && (
+      {def.notice && (
         <div className="flex gap-2 rounded-md border p-2 text-[11px] text-muted-foreground">
           <ShieldCheck className="size-3.5 shrink-0" />
-          Security operations run only against assets you declare in scope, inside the Kivo sandbox.
+          {def.notice}
         </div>
       )}
-      <Group title="Workspace">
-        {sections.map((s) => (
-          <Row key={s}>
-            <span className="size-1.5 rounded-full border border-muted-foreground/40" />
-            <span className="flex-1 truncate">{s}</span>
+      <div className="space-y-px">
+        <Row active={onHome && !workspaceSection} onClick={() => openWorkspaceSection(null)}>
+          <LayoutDashboard className="size-3.5 text-muted-foreground" />
+          <span className="flex-1 truncate">Overview</span>
+        </Row>
+      </div>
+      <Group title={def.label}>
+        {sections.map(({ section, data }) => (
+          <Row key={section.id} active={onHome && workspaceSection === section.id} onClick={() => openWorkspaceSection(section.id)}>
+            <section.icon className="size-3.5 text-muted-foreground" />
+            <span className="flex-1 truncate">{section.label}</span>
+            {data.source === "example" ? (
+              <span title="Example data — nothing detected yet" className="size-1.5 rounded-full border border-muted-foreground/60" />
+            ) : (
+              data.count !== undefined && <span className="font-mono text-[10.5px] text-muted-foreground">{data.count}</span>
+            )}
           </Row>
         ))}
       </Group>
-      <p className="px-2 text-[11px] leading-relaxed text-muted-foreground">
-        Same engine, different lens. Nothing matching this workspace was detected in <span className="font-mono">tandem</span>. It fills in from the
-        Project Graph once relevant code (e.g. PyTorch, Gymnasium, Kubernetes manifests) is present.
-      </p>
+      <Group title="Files" defaultOpen={false}>
+        <FileTree />
+      </Group>
     </>
   )
 }

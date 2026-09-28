@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
-import { ArrowRight, BookOpen, ChevronRight, Cpu, CornerDownLeft, History, Lightbulb, MousePointerClick, Sparkles, Wand2 } from "lucide-react"
+import { ArrowRight, BookOpen, Bot, ChevronRight, Cpu, Eraser, History, Lightbulb, MessageSquare, MousePointerClick, Sparkles, Wand2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -8,13 +8,16 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Textarea } from "@/components/ui/textarea"
 import { CONCEPTS } from "@/core/concepts"
 import { assembleContext, learningInsights } from "@/core/context"
 import type { Concept, KivoRef, Level, RuntimeSpan } from "@/core/types"
 import { cn } from "@/lib/utils"
 import { ask, explainInline } from "@/state/runners"
 import { useKivo } from "@/state/store"
+import { AgentMessages } from "@/features/agent/AgentView"
+import { Composer } from "@/features/agent/Composer"
+import { askWithMentions, clearAgent, runAgent, stopAgent } from "@/features/agent/runner"
+import { useAgent, type Mention } from "@/features/agent/store"
 import { LEVELS } from "./TopBar"
 import { EmptyState, KindIcon, SectionLabel } from "./bits"
 import { CaptureBar, CaptureScope, useUi } from "./capture"
@@ -435,7 +438,16 @@ function KnowledgeTab() {
 function AiTab() {
   const { selection, chat, nodes, services, library, experiences, personalContext, setPersonalContext, ai } = useKivo()
   const askFocusTick = useUi((s) => s.askFocusTick)
+  const mode = useAgent((s) => s.mode)
+  const setMode = useAgent((s) => s.setMode)
+  const agentRunning = useAgent((s) => s.running)
+  const agentEmpty = useAgent((s) => s.items.length === 0)
+  const autoApply = useAgent((s) => s.autoApply)
+  const setAutoApply = useAgent((s) => s.setAutoApply)
+  const tokens = useAgent((s) => s.tokens)
+  const agentModel = useAgent((s) => s.model)
   const [text, setText] = useState("")
+  const [mentions, setMentions] = useState<Mention[]>([])
   const input = useRef<HTMLTextAreaElement>(null)
   const bottom = useRef<HTMLDivElement>(null)
 
@@ -445,8 +457,8 @@ function AiTab() {
 
   const lastLen = chat[chat.length - 1]?.text.length ?? 0
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "nearest" })
-  }, [chat.length, lastLen])
+    if (mode === "ask") bottom.current?.scrollIntoView({ block: "nearest" })
+  }, [chat.length, lastLen, mode])
 
   const preview = useMemo(
     () => assembleContext({ ref: selection, nodes, services, library, experiences, personalEnabled: personalContext }),
@@ -454,72 +466,118 @@ function AiTab() {
   )
 
   const send = () => {
-    if (!text.trim()) return
-    ask(text.trim(), selection)
+    const q = text.trim()
+    if (!q) return
+    if (mode === "agent") runAgent(q, mentions)
+    else askWithMentions(q, mentions)
     setText("")
+    setMentions([])
   }
+
+  const empty = mode === "agent" ? agentEmpty : chat.length === 0
+  const clear = () => (mode === "agent" ? clearAgent() : useKivo.setState({ chat: [] }))
 
   return (
     <div className="flex h-full flex-col">
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
+        <div role="radiogroup" aria-label="AI mode" className="flex rounded-md bg-muted p-0.5 text-xs">
+          {(["ask", "agent"] as const).map((m) => (
+            <button
+              key={m}
+              role="radio"
+              aria-checked={mode === m}
+              onClick={() => setMode(m)}
+              className={cn("flex items-center gap-1 rounded-[5px] px-2 py-0.5 text-muted-foreground", mode === m && "bg-background text-foreground shadow-xs")}
+            >
+              {m === "ask" ? <MessageSquare className="size-3" /> : <Bot className="size-3" />}
+              {m === "ask" ? "Ask" : "Agent"}
+            </button>
+          ))}
+        </div>
+        {mode === "agent" && agentRunning && <span className="text-[11px] text-muted-foreground">running…</span>}
+        <Button variant="ghost" size="icon-xs" className="ml-auto text-muted-foreground" disabled={empty} onClick={clear} aria-label="Clear conversation" title="Clear conversation">
+          <Eraser />
+        </Button>
+      </div>
       <ScrollArea className="min-h-0 flex-1">
         <CaptureScope source="ai" className="space-y-4 p-4 text-[13px] leading-relaxed">
-          {chat.length === 0 && (
-            <div className="space-y-2 text-muted-foreground">
-              <p>Ask about {selection ? <span className="text-foreground">{selection.label}</span> : "anything in this project"}.</p>
-              <p className="text-xs">
-                Answers are grounded in the Project Graph and — if enabled — your notes and past experiences.{" "}
-                {ai?.ai ? `Model: ${ai.model} via ${ai.providers?.find((p) => p.id === ai.active)?.label ?? "your AI provider"}.` : "Offline: answers come from the concept catalog."}
-              </p>
-            </div>
-          )}
-          {chat.map((m) =>
-            m.role === "user" ? (
-              <div key={m.id} className="kivo-in ml-8 rounded-lg bg-muted px-3 py-2">
-                {m.ref && <div className="mb-0.5 font-mono text-[10px] text-muted-foreground">re: {m.ref.label}</div>}
-                {m.text}
-              </div>
-            ) : (
-              <div key={m.id} className="kivo-in space-y-2">
-                {m.reasoning && <Reasoning text={m.reasoning} streaming={!!m.streaming && !m.text} />}
-                <div>
-                  <Markdown>{m.text}</Markdown>
-                  {m.streaming && <span className="kivo-pulse inline-block h-3 w-1.5 bg-foreground/60" />}
+          {mode === "agent" ? (
+            <>
+              {agentEmpty && (
+                <div className="space-y-2 text-muted-foreground">
+                  <p>Give the agent a task in this project — it can read and search files, propose edits and run commands.</p>
+                  <p className="text-xs">
+                    Every edit is shown as a diff for you to accept or reject, and every command waits for your approval. Type <span className="font-mono">@</span> to attach files.{" "}
+                    {ai?.ai ? `Model: ${ai.model}.` : "Needs an AI provider."}
+                  </p>
                 </div>
-                {!m.streaming && m.context && m.context.length > 0 && <ContextUsed items={m.context} model={m.model} />}
-              </div>
-            ),
+              )}
+              <AgentMessages />
+            </>
+          ) : (
+            <>
+              {chat.length === 0 && (
+                <div className="space-y-2 text-muted-foreground">
+                  <p>Ask about {selection ? <span className="text-foreground">{selection.label}</span> : "anything in this project"}.</p>
+                  <p className="text-xs">
+                    Answers are grounded in the Project Graph and — if enabled — your notes and past experiences. Type <span className="font-mono">@</span> to attach files.{" "}
+                    {ai?.ai ? `Model: ${ai.model} via ${ai.providers?.find((p) => p.id === ai.active)?.label ?? "your AI provider"}.` : "Offline: answers come from the concept catalog."}
+                  </p>
+                </div>
+              )}
+              {chat.map((m) =>
+                m.role === "user" ? (
+                  <div key={m.id} className="kivo-in ml-8 rounded-lg bg-muted px-3 py-2">
+                    {m.ref && <div className="mb-0.5 font-mono text-[10px] text-muted-foreground">re: {m.ref.label}</div>}
+                    {m.text}
+                  </div>
+                ) : (
+                  <div key={m.id} className="kivo-in space-y-2">
+                    {m.reasoning && <Reasoning text={m.reasoning} streaming={!!m.streaming && !m.text} />}
+                    <div>
+                      <Markdown>{m.text}</Markdown>
+                      {m.streaming && <span className="kivo-pulse inline-block h-3 w-1.5 bg-foreground/60" />}
+                    </div>
+                    {!m.streaming && m.context && m.context.length > 0 && <ContextUsed items={m.context} model={m.model} />}
+                  </div>
+                ),
+              )}
+              <div ref={bottom} />
+            </>
           )}
-          <div ref={bottom} />
         </CaptureScope>
       </ScrollArea>
       <div className="space-y-2 border-t p-3">
-        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-          <span>
-            Context: {preview.filter((p) => p.source === "project").length} project · {preview.filter((p) => p.source !== "project").length} personal
-          </span>
-          <label className="flex items-center gap-1.5">
-            Personal context
-            <Switch size="sm" checked={personalContext} onCheckedChange={setPersonalContext} />
-          </label>
-        </div>
-        <div className="relative">
-          <Textarea
-            ref={input}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault()
-                send()
-              }
-            }}
-            placeholder={selection ? `Ask about ${selection.label}…` : "Ask Kivo…"}
-            className="min-h-16 resize-none pr-10 text-[13px]"
-          />
-          <Button size="icon-xs" className="absolute right-2 bottom-2" onClick={send} aria-label="Send">
-            <CornerDownLeft />
-          </Button>
-        </div>
+        {mode === "agent" ? (
+          <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+            <span className="truncate">{tokens > 0 ? `${(agentModel ?? ai?.model ?? "").split("/").pop()} · ${tokens.toLocaleString()} tokens` : (ai?.model ?? "").split("/").pop()}</span>
+            <label className="flex shrink-0 items-center gap-1.5" title="Apply the agent's edits without reviewing each diff. Commands always need approval.">
+              Auto-apply edits
+              <Switch size="sm" checked={autoApply} onCheckedChange={setAutoApply} disabled={agentRunning} />
+            </label>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+            <span>
+              Context: {preview.filter((p) => p.source === "project").length} project · {preview.filter((p) => p.source !== "project").length} personal
+            </span>
+            <label className="flex items-center gap-1.5">
+              Personal context
+              <Switch size="sm" checked={personalContext} onCheckedChange={setPersonalContext} />
+            </label>
+          </div>
+        )}
+        <Composer
+          inputRef={input}
+          value={text}
+          onChange={setText}
+          mentions={mentions}
+          onMentions={setMentions}
+          onSubmit={send}
+          running={mode === "agent" && agentRunning}
+          onStop={stopAgent}
+          placeholder={mode === "agent" ? "Describe a task… (@ to attach files)" : selection ? `Ask about ${selection.label}…` : "Ask Kivo… (@ to attach files)"}
+        />
       </div>
     </div>
   )

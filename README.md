@@ -2,105 +2,168 @@
 
 **Build software by describing what you want. Understand it by watching how it works.**
 
-One engineering environment. Any stack. Any discipline. Any level of expertise.
+One unified engineering environment. Any stack. Any discipline. Any level of expertise.
 
-Kivo is an intent-driven engineering environment: you describe a service, review what Kivo understood as a structured spec, watch it get built with every step explained, then observe it running — and capture what you learn into a personal library that makes future answers yours.
+Kivo is an intent-driven engineering platform: you describe a service, review what Kivo understood as a structured specification, watch it get built with every step explained in real-time, then observe it running live — all while capturing what you learn into a persistent library that makes future workflows yours.
 
-This repository is the working prototype of the full loop, plus the architecture it's designed around ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
+---
 
-## Run it
+## Quick Start
+
+### Prerequisites
+- **Node.js**: 22.9+
+- **Git**: 2.30+
+- **Python**: 3.9+ (for verified Python/FastAPI service builds)
+
+### 1. Install & Configure
 
 ```bash
+git clone https://github.com/nibir404/Kivo.git
+cd Kivo
 npm install
-cp .env.example .env   # then put your GROQ_API_KEY in .env
-npm run dev            # starts the Kivo daemon (127.0.0.1:5175) and the UI (localhost:5174)
+cp .env.example .env   # add your GROQ_API_KEY to .env
 ```
 
-Without a key, or without the daemon, Kivo still runs in offline mode with simulated builds (clearly labelled).
+### 2. Start Development
 
 ```bash
-npm test          # unit tests: language detection, planner, spec validation, pipeline preflight
-npm run typecheck # UI + daemon
-npm run check     # typecheck + lint + tests
+npm run dev            # daemon (127.0.0.1:5175) + Vite UI with hot reload (localhost:5174)
 ```
 
-## Languages
+Open [http://localhost:5174](http://localhost:5174) in your browser.
 
-Name a language in your description ("…using Java", "in Spring Boot") and Kivo uses it; otherwise it uses the stack picker, which defaults to the project's own backend (Python · FastAPI).
+### 3. Production Build (Single Process)
 
-| | Plan & review | Build · test · run |
-|---|---|---|
-| Python (FastAPI) | ✓ | ✓ — the verified pipeline below |
-| Java, Kotlin, TypeScript, Go, Rust, Swift, Dart, C++ | ✓ | Not yet. The review screen says so and offers Python; the daemon refuses the build before any AI call rather than faking one. |
+To run Kivo as a single background daemon that serves the production UI:
 
-Adding a language means adding a toolchain (`src/core/stacks.ts` → `TOOLCHAINS`, `server/toolchains.ts` preflight, pipeline steps). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#toolchains).
+```bash
+npm run build
+npm start              # daemon serves the built UI → open http://localhost:5175
+```
 
-## What's real
+### 4. Tests & Quality Gates
 
-| | How it works |
+```bash
+npm test          # 158 tests across 34 suites (agent, SCM, projects, editor, toolchains)
+npm run typecheck # TypeScript strict typecheck across client and server
+npm run lint      # oxlint validation
+npm run check     # full verification (typecheck + lint + tests)
+```
+
+---
+
+## What's Real in Kivo
+
+| Capability | How It Works |
 |---|---|
-| **Intent → spec** | Groq (`openai/gpt-oss-120b`) turns your description into a Service IR under a JSON contract; the reasoning streams live. |
-| **Build** | The Implementation Agent writes real files into `.kivo-workspace/tandem/services/<id>/`, streaming token by token. Infrastructure (`db.py`, `outbox.py`, `kv.py`, `tests/conftest.py`) comes from deterministic templates. |
-| **Validation** | `pip install` of requirements derived from the code's imports → `pyflakes` lint (+ deterministic import autofix) → `pytest` → up to 3 AI repair rounds using targeted SEARCH/REPLACE edits → `uvicorn` boot with a `/health` check. |
-| **Honesty** | A service is only marked running when lint is clean and every test passes; otherwise it boots "for inspection" and the failing output is shown. |
-| **Terminal** | A real login shell (pty over WebSocket) in the project workspace, with the build venv on `PATH`. Try `cd services/authentication && pytest` or `curl` the running service. |
-| **Code** | A pure editor (CodeMirror) over the real files. **Inline AI edit**: select code with the mouse and the prompt opens by itself (or press ⌘K on a selection or line), describe the change, watch it stream in as a red/green diff, then Accept ⌘↵ / Reject Esc / refine with a follow-up. ⌘S saves; right-click or ⌘E explains a selection. |
-| **API client** | Every service Kivo runs gets an in-app API tab: endpoints and example bodies come from its live OpenAPI schema, tokens from login responses are captured and reused. Requests go through the daemon, which can only reach Kivo-launched services. |
-| **Git** | The workspace is a git repo; every build is a commit (`feat(...)` when green, `wip(...)` when not). |
-| **AI answers** | Streaming Groq answers grounded in the project graph and your personal notes/experiences, with the retrieved context listed under each answer. |
+| **Intent → Spec** | Groq (`openai/gpt-oss-120b`) transforms plain-English descriptions into a typed Service IR under a JSON schema contract with streaming reasoning. |
+| **Deterministic & AI Build** | Domain code streams token-by-token into `.kivo-workspace/tandem/services/<id>/`. Infrastructure files (`db.py`, `outbox.py`, `kv.py`, `conftest.py`) use deterministic templates to eliminate boilerplates. |
+| **Pipeline Verification** | Import detection → allowlisted `pip install` → `pyflakes` linting (+ deterministic import autofix) → `pytest` suite → up to 3 AI repair iterations using exact SEARCH/REPLACE blocks → `uvicorn` boot with `/health` polling. |
+| **Radical Honesty** | A service is marked **running** only when lint is clean and 100% of tests pass. Failing services boot "for inspection" with live failure logs exposed. |
+| **Git & Source Control (SCM)** | Complete in-app Git GUI powered by Git Porcelain v2: stage/unstage files, view unified and split diffs, generate AI commit messages grounded in staged diffs, switch/create branches, publish upstream, push, and pull. Safe discard sends files to OS Trash. |
+| **Autonomous Coding Agent** | Multi-turn tool-calling loop (`list_files`, `read_file`, `search`, `edit_file`, `run_command` with user approval checkpoints). Path traversal protection, `.git` write guards, and inline ghost-text code autocomplete. |
+| **Multi-Project Manager** | Open any local directory or clone external Git repositories into Kivo. Switch between the managed demo and real-world repositories with persistent recent history. |
+| **Advanced Code Editor** | CodeMirror 6 with syntax support for Python, TS, TSX, JS, SQL, Markdown, YAML, and JSON. Multi-tab management, project-wide fast search (ripgrep / git grep / JS fallback), document symbol hierarchy, and inline ⌘K diff edits. |
+| **Persistent Terminals** | Real login shells (`node-pty` over WebSocket). Terminal sessions live in the daemon, surviving browser refreshes and tab closures with scrollback replay. GPU-accelerated WebGL rendering. |
+| **Interactive API Client** | Automatically parses OpenAPI schemas from running services, providing an in-app test bench with captured JWT session reuse. |
+| **Evergreen Codebase Memory** | Persistent architectural memory (`docs/MEMORY.md`) maintained automatically via the `codebase-memory` skill before every git push. |
 
-Still simulated: the traffic in **Observe** (request traces and metrics). Real logs from running services stream into the **Logs** tab.
+---
 
-## AI providers
+## 9 Domain Workspaces
 
-Kivo talks to any OpenAI-compatible provider. Configure one or more in `.env` (see `.env.example`):
+One codebase, nine specialized engineering lenses. Switch anytime from the navigator or via `⌘K` → "workspace":
 
-| Provider | Env | Notes |
+| Workspace | Focus & Sections | Derived from Project |
 |---|---|---|
-| Groq | `GROQ_API_KEY` | Default. `gpt-oss-120b` → `gpt-oss-20b`. |
-| Puku | `PUKU_API_KEY` (+ optional `PUKU_BASE_URL`, `PUKU_MODELS`, `PUKU_AUTH_HEADER`) | `api.puku.sh/v1` currently requires a JWT from Puku's sign-in, so `pk_live_` keys show as **Not authorized** until Puku documents how they authenticate. |
-| Any other | `OPENAI_COMPAT_BASE_URL`, `OPENAI_COMPAT_API_KEY`, `OPENAI_COMPAT_MODELS` | OpenRouter, a self-hosted gateway, etc. |
+| **Software** | Intent → spec → build → inspect → run | Everything (full loop) |
+| **Web & Mobile** | Screens · Components · API usage · Design tokens · Accessibility · Performance · Builds | Route files, component trees, API client endpoints, platform configs |
+| **Data Engineering** | Sources · Schemas · Migrations · Pipelines · Lineage · Data quality · Freshness | Datastores, entities, `migrations/`, outbox tables, system graph |
+| **AI / ML** | Datasets · Experiments · Training · Models · Evaluation · Compute · Notebooks | Dataset paths, `train*.py`, model weights, Jupyter notebooks, MLflow/WandB |
+| **Reinforcement Learning** | Environment · Agent · Policy · Reward · Episodes · Training health · Sanity checks | `env*.py`, agent policies, Gymnasium / Stable-Baselines3 modules |
+| **Cybersecurity** | Scope · Attack surface · Findings · Controls · Threat model (STRIDE) · Security tests | Route auth status, unauthenticated writes, missing rate limits, security headers |
+| **DevOps / SRE** | Services · Containers · Deployments · Logs · Metrics · Incidents · SLOs · Runbooks | Container states, CI workflows, live daemon logs, incident triggers |
+| **Embedded / IoT** | Devices · Firmware · Sensors & buses · Memory · Power · Serial monitor · Flash & OTA | `platformio.ini`, `sdkconfig`, firmware sources, sensor driver modules |
+| **Game Development** | Scenes · Entities & scripts · Assets · Frame budget · Input map · Builds · Playtests | Engine configuration, scene hierarchies, script assets, texture registries |
 
-The status chip in the top bar shows every provider's live state (connected / not authorized / unreachable / not configured) with the provider's own error message, lets you switch the active one, and re-checks on demand. When the active provider is rate-limited, other connected providers take over (`KIVO_CROSS_PROVIDER_FAILOVER=0` to disable). A provider that starts rejecting its key mid-session is taken out of rotation automatically.
+Every section displays evidence badges: **From this project** (with clickable file links), **Example data** (clearly labeled mock data when not yet detected), or **Checklist** (interactive best-practice guides persisted locally).
 
-## Groq free tier
+---
 
-Free Groq keys allow ~8K tokens per minute per model. Kivo fails over between `gpt-oss-120b` and `gpt-oss-20b` and waits exactly as long as Groq asks, showing the countdown. A full authentication build takes about 1–4 minutes. Quality varies run to run; failures are shown with exact output, and you can fix them in Code and re-run `pytest` in the Terminal.
+## Language Toolchains
 
-## Security
+Name a language in your prompt (*"Create an invoice service in Spring Boot"*) and Kivo respects it; otherwise it defaults to the active project stack.
 
-- The daemon binds to `127.0.0.1` and rejects requests and WebSocket upgrades from any origin other than the Kivo UI, so other websites can't reach your shell or files.
-- File access is confined to the workspace directory.
-- The API key lives only in `.env` (git-ignored). It's never sent to the browser and it's stripped from the environment of the shell and every child process.
-- Model output is treated as untrusted: JSON is coerced into typed structures, and Markdown renders without raw HTML.
-- Every request is validated: malformed or oversized bodies get a 4xx, service ids must be slugs (a build can never write or delete outside `services/<id>`).
+| Language / Framework | Plan & Review | Build · Test · Run |
+|---|---|---|
+| **Python (FastAPI)** | Supported | Fully verified automated pipeline (codegen, lint, pytest, uvicorn) |
+| **Java / Kotlin (Spring, Quarkus)** | Supported | Preflight flags as unbuilt; offers Python pipeline or external build |
+| **TypeScript / Node / Go / Rust** | Supported | Verified preflight detection; toolchains in active development |
 
-## Stability
+Adding a language requires defining a toolchain in `src/core/stacks.ts`, preflight checks in `server/toolchains.ts`, and pipeline verification steps. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#toolchains).
 
-- A failing request, a missing tool (e.g. no `python3`) or a crashed child process is reported, never fatal to the daemon.
-- Outbound calls have timeouts (AI streams, the API client proxy, health checks); SSE streams abort when the browser disconnects.
-- One build per service at a time (a second one gets HTTP 409).
-- On shutdown (Ctrl-C, or a `tsx watch` reload) the daemon stops every service and shell it started, so nothing is left holding a port.
-- If the daemon goes away mid-build, the UI marks the build as stopped instead of leaving it "building" forever.
+---
 
-## Try this
+## AI Providers & Failover
 
-1. **Build**: click the authentication example and press ↑. Watch the Intent Agent reason, review *"I understand this as"* (including its open questions), then **Build Authentication**.
-2. The **Build** tab is a timeline: finished steps collapse to one line, the running step shows the code being written or the tool output. "Why this step?" opens the explanation beside it.
-3. When it finishes, the result card offers **Try the API** (in-app client), **Open code**, **Run tests** (typed into the built-in terminal) and **Rebuild**, or **Ask AI why** if something failed.
-4. **Code** (⌘2): open a generated file, select a function, press **⌘K** and describe a change.
-5. **Observe / Learn / Library**: the runtime explanation, architecture graph, and personal knowledge features from before.
+Configure your preferred providers in `.env` (see `.env.example`):
 
-`⌘K` opens the command menu (or inline edit inside the editor). `⌘1–5` switch modes. `⌘B` / `⌘J` / `⌘I` toggle the panels. `⌘,` opens Preferences, `?` lists every shortcut. Below 960px wide, the navigator and context panel become slide-over sheets.
+| Provider | Environment Variables | Capabilities |
+|---|---|---|
+| **Groq** (Default) | `GROQ_API_KEY` | `openai/gpt-oss-120b` (primary) with automatic failover to `openai/gpt-oss-20b` on rate limits. |
+| **Puku** | `PUKU_API_KEY`, `PUKU_BASE_URL` | Integration endpoint (requires JWT authentication). |
+| **OpenAI-Compatible** | `OPENAI_COMPAT_BASE_URL`, `OPENAI_COMPAT_API_KEY`, `OPENAI_COMPAT_MODELS` | Supports OpenRouter, vLLM, Ollama, LocalAI, or custom OpenAI proxies. |
 
-## You stay in control
+- **Cross-Provider Failover**: When the active provider is rate-limited, requests automatically transition to alternative configured providers (`KIVO_CROSS_PROVIDER_FAILOVER=1`).
+- **Live Health Status**: Top-bar chip monitors API latency, model authorization, and rate-limit cooldown timers.
 
-- **First run** shows a short welcome. You pick how Kivo explains things (Beginner → Expert) and where to start. You can reopen it from the avatar menu → Getting started.
-- **Nothing runs on its own.** Demo traffic is simulated, labelled as such, and off until you turn it on (status bar, Observe, or Preferences). When a build finishes, Kivo tells you what happened and offers next steps. It doesn't switch screens for you.
-- **Every decision point offers choices.** On intent review you can Build, Refine description (it goes back to the composer with your text) or Discard (with Undo). Empty screens (Code, Observe) suggest where to begin instead of showing a blank page.
-- **Preferences** (`⌘,`) covers theme, explanation depth, AI provider, focus mode for code, the Explain & Capture toolbar, build notifications, demo traffic, layout reset, and memory/privacy.
-- **Your layout sticks.** Panel sizes you drag are remembered across sessions. The terminal panel starts folded and opens when you run something.
+---
+
+## Security & Sandboxing
+
+Kivo is designed with defense-in-depth security invariants:
+
+1. **Loopback & Origin Protection**: The daemon binds strictly to `127.0.0.1` and drops any HTTP or WebSocket request from origins other than the Kivo UI (`localhost:5174`, `127.0.0.1:5174`, `localhost:4173`).
+2. **DNS Rebinding Shield**: Only requests with loopback `Host` headers (`localhost`, `127.0.0.1`) are answered.
+3. **Workspace Confinement**: All file reads, writes, and searches pass through `resolveIn()` / `safePath()`. Path traversal attempts (`../`), symlink escapes, and modifications to `.git/` are strictly blocked.
+4. **Environment Isolation**: API keys exist only in daemon memory from `.env` (git-ignored) and are stripped from terminal shells and child processes. Code runs with an allowlisted environment to prevent exfiltration of `AWS_*`, `GITHUB_TOKEN`, or `SSH_AUTH_SOCK`.
+5. **Supply Chain Safeguard**: Automated `pip install` only installs vetted packages. Unknown dependencies halt the build and require explicit approval in `KIVO_EXTRA_PACKAGES`.
+6. **Destructive Action Protection**: Discarding files in SCM or deleting files in the explorer moves them to the operating system's Trash (`~/.Trash` on macOS, `.local/share/Trash` on Linux) rather than permanently deleting them.
+
+---
+
+## Codebase Memory System
+
+Kivo includes a built-in context preservation workflow powered by the `codebase-memory` skill and [docs/MEMORY.md](docs/MEMORY.md):
+- **Pre-Push Sync**: Run `./scripts/sync-memory.sh` before pushing code.
+- **Continuous Documentation**: Captures architecture changes, toolchain updates, security boundaries, and decisions in version control.
+- **Zero Context Loss**: Keeps AI agents, human developers, and new team members aligned with the current state of the repository.
+
+---
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `⌘K` | Open Command Menu / Inline AI Edit (in editor) |
+| `⌘1` – `⌘5` | Switch modes (Build, Code, Observe, Learn, Library) |
+| `⌘B` | Toggle Navigator panel |
+| `⌘J` | Toggle Terminal panel |
+| `⌘I` | Toggle Context panel |
+| `⌘S` | Save current file |
+| `⌘P` | Quick Open file palette |
+| `⌘,` | Open Preferences |
+| `?` | Show all keyboard shortcuts |
+
+---
 
 ## Stack
 
-React 19 · TypeScript · Vite · Tailwind v4 · shadcn/ui (Radix) · CodeMirror 6 · xterm.js · React Flow · Zustand — daemon: Node 22 · node-pty · ws · Groq
+- **Frontend**: React 19 · TypeScript · Vite 8 · Tailwind CSS v4 · shadcn/ui (Radix) · CodeMirror 6 · xterm.js · React Flow · Zustand
+- **Daemon / Backend**: Node.js 22 · `tsx` · `node-pty` · `ws` · Git Porcelain v2 · Groq API
+
+---
+
+## License
+
+MIT © [Kivo Contributors](https://github.com/nibir404/Kivo)

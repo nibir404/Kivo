@@ -123,3 +123,24 @@ export const CONCEPT_ENCOUNTERS: Record<string, { count: number; explored: strin
   postgresql: { count: 9, explored: ["queries", "indexes", "migrations"] },
   jwt: { count: 4, explored: ["claims", "signing", "expiry"] },
 }
+
+/**
+ * A starting System Graph for a project Kivo didn't create: one node per detected client,
+ * backend, store and piece of infrastructure, with the evidence file as its purpose. Edges are
+ * left out — Kivo only draws connections it has actually seen.
+ */
+export function nodesFromAnalysis(analysis: import("./types").ProjectAnalysis): SystemNode[] {
+  const kind: Record<string, SystemNode["kind"]> = { Frontend: "client", Mobile: "client", Backend: "service", Database: "database", Cache: "cache", Infrastructure: "infra", "AI / ML": "model", Data: "queue" }
+  const group: Record<string, SystemNode["group"]> = { Frontend: "Frontend", Mobile: "Frontend", Backend: "Backend", Database: "Data", Cache: "Data", Infrastructure: "Infrastructure", "AI / ML": "AI / ML", Data: "Data" }
+  return analysis.detections
+    .filter((d) => kind[d.category])
+    .map((d) => ({
+      id: `det-${d.tech.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      label: d.tech,
+      kind: kind[d.category],
+      tech: d.tech,
+      purpose: `Detected from ${d.evidence}`,
+      status: "ready" as const,
+      group: group[d.category],
+    }))
+}

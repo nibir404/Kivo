@@ -1,6 +1,6 @@
 import type { ReactNode } from "react"
 import { useTheme } from "next-themes"
-import { ArrowRight, Code2, Compass, Monitor, Moon, Network, RefreshCw, Sparkles, Sun } from "lucide-react"
+import { ArrowRight, Code2, Compass, FolderOpen, Monitor, Moon, Network, RefreshCw, Sparkles, Sun } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -56,8 +56,13 @@ function WelcomeDialog() {
     fn()
   }
   const paths = [
+    ...(daemon
+      ? [
+          { icon: FolderOpen, title: "Open your project", body: "A folder on this Mac, or clone one from GitHub. The editor, terminal and git all work on it.", go: () => useUi.getState().setProjectDialog("open") },
+        ]
+      : []),
     { icon: Sparkles, title: "Build a service", body: "Describe it in plain words. You review the plan before anything is generated.", go: startNewService },
-    { icon: Network, title: "Explore the architecture", body: "See how this project fits together and click anything to understand it.", go: () => setMode("learn") },
+    { icon: Network, title: "Explore the demo architecture", body: "See how the demo project fits together and click anything to understand it.", go: () => setMode("learn") },
     { icon: Code2, title: "Open the code", body: "A focused editor with inline AI edits. Select code and press ⌘K.", go: () => setMode("code") },
   ]
 
@@ -248,6 +253,7 @@ function SettingsDialog() {
           <Section title="Workspace">
             <ToggleRow label="Focus mode for code" description="Fold the context panel away while you edit, and bring it back when you leave." checked={k.prefs.focusCode} onChange={(v) => k.setPref("focusCode", v)} />
             <ToggleRow label="AI edit on selection" description="Selecting code with the mouse opens the inline AI prompt. ⌘K works either way." checked={k.prefs.aiOnSelect} onChange={(v) => k.setPref("aiOnSelect", v)} />
+            <ToggleRow label="AI autocomplete" description="Suggest code as dimmed ghost text while you type. Tab accepts, Esc dismisses." checked={k.prefs.autocomplete} onChange={(v) => k.setPref("autocomplete", v)} />
             <ToggleRow label="Explain & Capture toolbar" description="Show Explain · Why · Note · Save · Ask when you select text or objects." checked={k.prefs.captureToolbar} onChange={(v) => k.setPref("captureToolbar", v)} />
             <ToggleRow label="Build notifications" description="When a build finishes, show what happened and what you could do next." checked={k.prefs.buildNotify} onChange={(v) => k.setPref("buildNotify", v)} />
             <ToggleRow label="Demo traffic" description="Simulated requests for exploring Observe. Off by default so nothing looks live that isn't." checked={k.runtimeLive} onChange={() => k.toggleRuntime()} />

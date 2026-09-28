@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useEffect, useRef, useState } from "react"
 import { Keyboard, Loader2, PanelBottom, PanelLeft, PanelRight } from "lucide-react"
 import { useDefaultLayout, type PanelImperativeHandle } from "react-resizable-panels"
 import { toast } from "sonner"
@@ -7,10 +7,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { BuildView } from "@/features/build/BuildView"
-import { CodeView } from "@/features/code/CodeView"
-import { LearnView } from "@/features/learn/LearnView"
-import { LibraryView } from "@/features/library/LibraryView"
-import { ObserveView } from "@/features/observe/ObserveView"
+import { workspace } from "@/features/workspace/registry"
 import { cn } from "@/lib/utils"
 import { init, openFile } from "@/state/runners"
 import { useKivo } from "@/state/store"
@@ -23,7 +20,14 @@ import { Navigator } from "./Navigator"
 import { TopBar, MODES } from "./TopBar"
 import { FloatingCaptureToolbar, useDismissCapture, useUi } from "./capture"
 import { PreferenceDialogs } from "./Preferences"
+import { ProjectDialogs } from "./projects/ProjectDialogs"
 import { useWidthTier } from "./useCompact"
+
+// The editor (CodeMirror) and graph views (React Flow) are heavy; load them the first time they're opened.
+const CodeView = lazy(() => import("@/features/code/CodeView").then((m) => ({ default: m.CodeView })))
+const LearnView = lazy(() => import("@/features/learn/LearnView").then((m) => ({ default: m.LearnView })))
+const LibraryView = lazy(() => import("@/features/library/LibraryView").then((m) => ({ default: m.LibraryView })))
+const ObserveView = lazy(() => import("@/features/observe/ObserveView").then((m) => ({ default: m.ObserveView })))
 
 /** Drives time: build steps advance on their own schedule and live traffic flows while running. */
 function useEngine() {
@@ -64,8 +68,8 @@ function useShortcuts(toggle: (p: "left" | "right" | "bottom") => void) {
         return
       }
       if (e.key === "k") {
-        // Inside the code editor, ⌘K is inline edit (handled by the editor itself).
-        if ((e.target as HTMLElement | null)?.closest?.(".cm-editor")) return
+        // Inside the code editor ⌘K is inline edit, inside the terminal it clears — both handle it themselves.
+        if ((e.target as HTMLElement | null)?.closest?.(".cm-editor,.xterm")) return
         e.preventDefault()
         setCommandOpen(!commandOpen)
       }
@@ -135,6 +139,7 @@ export function AppShell() {
   const tier = useWidthTier()
   const compact = tier === "compact"
   const mode = useKivo((s) => s.mode)
+  const discipline = useKivo((s) => s.discipline)
   const activeFile = useKivo((s) => s.activeFile)
   const activeServiceId = useKivo((s) => s.activeServiceId)
   const rightOpenTick = useUi((s) => s.rightOpenTick)
@@ -171,6 +176,21 @@ export function AppShell() {
   useEffect(() => {
     if (bottomOpenTick && bottom.current?.isCollapsed()) bottom.current.expand()
   }, [bottomOpenTick])
+
+  // Maximize the bottom panel over the workspace, and put it back where the user had it.
+  const bottomMax = useUi((s) => s.bottomMax)
+  const restoreBottom = useRef<number | null>(null)
+  useEffect(() => {
+    const b = bottom.current
+    if (!b) return
+    if (bottomMax) {
+      restoreBottom.current = b.isCollapsed() ? null : b.getSize().inPixels
+      requestAnimationFrame(() => b.resize("88%"))
+    } else if (restoreBottom.current !== null) {
+      b.resize(restoreBottom.current)
+      restoreBottom.current = null
+    }
+  }, [bottomMax])
 
   // First visit: a calm workspace (terminal folded away) and a short welcome.
   useEffect(() => {
@@ -214,17 +234,25 @@ export function AppShell() {
   const main = (
     <main key={mode} className="kivo-fade h-full min-w-0 overflow-hidden">
       <ErrorBoundary resetKey={mode}>
-        {mode === "build" && <BuildView />}
-        {mode === "code" && <CodeView />}
-        {mode === "observe" && <ObserveView />}
-        {mode === "learn" && <LearnView />}
-        {mode === "library" && <LibraryView />}
+        <Suspense
+          fallback={
+            <div className="flex h-full items-center justify-center text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+            </div>
+          }
+        >
+          {mode === "build" && <BuildView />}
+          {mode === "code" && <CodeView />}
+          {mode === "observe" && <ObserveView />}
+          {mode === "learn" && <LearnView />}
+          {mode === "library" && <LibraryView />}
+        </Suspense>
       </ErrorBoundary>
     </main>
   )
 
   return (
-    <div className="flex h-full flex-col bg-background text-foreground">
+    <div className="flex h-full flex-col bg-background text-foreground" data-workspace={discipline} style={{ "--ws-h": workspace(discipline).hue } as React.CSSProperties}>
       <TopBar compact={compact} onToggleLeft={() => toggle("left")} onToggleRight={() => toggle("right")} />
       <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1" id="kivo-shell-v" defaultLayout={outer.defaultLayout} onLayoutChanged={outer.onLayoutChanged}>
         <ResizablePanel id="work" defaultSize="72" minSize="30">
@@ -278,6 +306,7 @@ export function AppShell() {
       <ExperienceDialog />
       <PreferenceDialogs />
       <FloatingCaptureToolbar />
+      <ProjectDialogs />
     </div>
   )
 }

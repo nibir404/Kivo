@@ -5,6 +5,7 @@ import { parseIntent } from "@/core/intent"
 import { detectStack, frameworkName, languageName } from "@/core/stacks"
 import type { ContextItem, KivoRef, LogLine, ServiceSpec } from "@/core/types"
 import { api, sse, subscribe } from "@/lib/api"
+import { useTerminals } from "@/shell/terminal/store"
 import { useKivo, type StepRun } from "./store"
 
 /**
@@ -40,18 +41,21 @@ async function connect(attempt = 0): Promise<void> {
   try {
     const health = await api.health()
     set({ ai: health, daemon: true, project: health.project })
-    const [project, tree] = await Promise.all([api.project(), api.tree()])
-    set({ analysis: project, files: tree.files })
+    await loadCurrentProject()
     if (warned) toast.success("Reconnected to the Kivo daemon")
     warned = false
     unsubscribe?.()
-    unsubscribe = subscribe((e) => {
+    unsubscribe = subscribe(
+      (e) => {
+      if (e.t === "project") void loadCurrentProject(true)
       if (e.t === "service-log") {
         const line = String(e.line)
         const level: LogLine["level"] = /error|exception|traceback/i.test(line) ? "error" : /warn|\s4\d\d\b/i.test(line) ? "warn" : "info"
         set((s) => ({ logs: [...s.logs, { id: crypto.randomUUID(), at: Date.now(), level, source: String(e.service), message: line }].slice(-400) }))
       }
-    })
+      },
+      () => void loadCurrentProject(true).catch(() => {}),
+    )
   } catch {
     set({ daemon: false, ai: null })
     if (attempt === 3 && !warned) {
@@ -59,6 +63,53 @@ async function connect(attempt = 0): Promise<void> {
       toast("Kivo daemon not connected", { description: "Working offline with simulated builds. Kivo will reconnect automatically when it's running (npm run dev)." })
     }
     setTimeout(() => connect(attempt + 1), Math.min(10_000, 1000 + attempt * 1000))
+  }
+}
+
+/**
+ * Read the daemon's current project (after connecting, or when it switches). Calls are queued:
+ * a switch triggers both our own reload and the daemon's "project" event, and the second must
+ * see the first's result rather than announce the switch twice.
+ */
+let loadQueue: Promise<void> = Promise.resolve()
+function loadCurrentProject(switched = false) {
+  const run = loadQueue.then(() => doLoadProject(switched))
+  loadQueue = run.catch(() => {}) // a failed load mustn't block the next one; the caller still sees the error
+  return run
+}
+
+async function doLoadProject(switched: boolean) {
+  const before = S().projectInfo?.id
+  const [{ project, ...analysis }, tree] = await Promise.all([api.project(), api.tree()])
+  S().loadProject(project, analysis, tree.files)
+  if (switched && before && before !== project.id) {
+    toast.success(`Opened ${project.name}`, { description: project.dir })
+    // Shells already open stay where they are; a new one starts in the project just opened.
+    const terms = useTerminals.getState()
+    if (terms.tabs.length) terms.newTab()
+  }
+}
+
+/** Re-read the daemon's current project (e.g. after a clone finished). */
+export const reloadCurrentProject = () => loadCurrentProject(true)
+
+/** Open a folder on this machine as the current project. */
+export async function openProjectFolder(path: string) {
+  try {
+    await api.openProject(path)
+    await loadCurrentProject(true)
+  } catch (err) {
+    toast.error("Couldn't open that folder", { description: String((err as Error).message) })
+    throw err
+  }
+}
+
+export async function switchToProject(id: string) {
+  try {
+    await api.switchProject(id)
+    await loadCurrentProject(true)
+  } catch (err) {
+    toast.error("Couldn't switch project", { description: String((err as Error).message) })
   }
 }
 
@@ -144,6 +195,11 @@ type BuildEvent =
 
 export async function build() {
   const s = S()
+  // One build on screen at a time: a second stream would write into the first one's steps.
+  if (s.build && !s.build.finished) {
+    toast.info("A build is already running", { description: "Wait for it to finish, then start the next one." })
+    return
+  }
   if (!s.daemon || !s.ai?.ai) return s.startBuild()
   const spec = s.beginRealBuild()
   if (!spec) return
@@ -194,7 +250,11 @@ export async function build() {
           flush()
           S().patchBuild((b) => ({ ...b, runs: { ...b.runs, [e.id]: { ...b.runs[e.id], files: [...new Set([...b.runs[e.id].files, e.path])] } } }))
           // Keep open editor tabs in sync with files the pipeline rewrites.
-          if (S().fileCache[e.path]) api.read(e.path).then(({ content }) => set((st) => ({ fileCache: { ...st.fileCache, [e.path]: { content, saved: content } } })))
+          if (S().fileCache[e.path])
+            api
+              .read(e.path)
+              .then(({ content }) => set((st) => ({ fileCache: { ...st.fileCache, [e.path]: { content, saved: content } } })))
+              .catch(() => {}) // the file was replaced again before we read it; the next event refreshes it
           break
         case "step": {
           flush()
@@ -268,7 +328,8 @@ function contextText(items: ContextItem[], ref: KivoRef | null, extra = "") {
 }
 
 /** Answer the latest user message. Streams from the active AI provider when available, grounded template otherwise. */
-export async function ask(question: string, ref: KivoRef | null) {
+/** `extra` is context the model sees but the chat doesn't show (e.g. the workspace section on screen). */
+export async function ask(question: string, ref: KivoRef | null, extra?: string) {
   const s = S()
   s.pushChat({ id: crypto.randomUUID(), role: "user", text: question, ref })
   const ctx = assembleContext({ ref, question, nodes: s.nodes, services: s.services, library: s.library, experiences: s.experiences, personalEnabled: s.personalContext })
@@ -284,6 +345,7 @@ export async function ask(question: string, ref: KivoRef | null) {
   if (ref && (ref.kind === "code" || ref.kind === "text") && S().activeFile && S().fileCache[S().activeFile!]) {
     code = `Open file ${S().activeFile}:\n${S().fileCache[S().activeFile!].content.slice(0, 6000)}`
   }
+  if (extra) code = [code, extra].filter(Boolean).join("\n\n")
   const history = S()
     .chat.filter((m) => m.id !== id && m.text)
     .slice(-8)

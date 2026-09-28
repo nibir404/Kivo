@@ -1,16 +1,21 @@
 import http from "node:http"
 import path from "node:path"
-import * as pty from "node-pty"
 import { WebSocketServer } from "ws"
 import type { ServiceSpec } from "../src/core/types"
 import { aiAvailable, checkAll, currentModel, describe, parseJsonLoose, setActive, stream, type Msg } from "./ai"
 import { bus } from "./bus"
 import { HttpError, json, readJson, requireObject, requireString, sse } from "./http"
-import { cleanEnv, isBuilding, runBuild, serviceUrl, stopAll, type BuildEvent } from "./pipeline"
+import { isBuilding, runBuild, serviceUrl, stopAll, type BuildEvent } from "./pipeline"
 import { chatSystem, EDIT_SYSTEM, editUser, INTENT_SYSTEM, intentUser } from "./prompts"
 import { normalizeSpec, parseServices, projectContext, resolveStack, sanitizeStack, validateBuildSpec } from "./spec"
+import { attachTerminal, killAllTerminals, killTerminal, listTerminals } from "./terminals"
 import { allToolchains } from "./toolchains"
-import { analyze, ensureWorkspace, git, listFiles, PROJECT, PROJECT_DIR, readFile, VENV, writeFile } from "./workspace"
+import { hostOk, originOk, PORT, serveUi, uiBuilt } from "./web"
+import { handle as handleAgent } from "./agent"
+import { handle as handleEditor } from "./editor"
+import { handleProjects } from "./projects"
+import { handle as handleScm } from "./scm"
+import { analyze, ensureWorkspace, git, isGitRepo, listFiles, project, projectDir, publicProject, readFile, writeFile } from "./workspace"
 
 /**
  * Kivo daemon — local only. Binds to 127.0.0.1 and rejects requests from any origin
@@ -20,9 +25,18 @@ import { analyze, ensureWorkspace, git, listFiles, PROJECT, PROJECT_DIR, readFil
  * outbound request has an error path and a timeout, and shutdown stops what Kivo started.
  */
 
-const PORT = Number(process.env.KIVO_DAEMON_PORT ?? 5175)
-const ALLOWED = new Set(["http://localhost:5174", "http://127.0.0.1:5174", "http://localhost:4173", "http://127.0.0.1:4173"])
+/** `npm start`: the daemon also serves the built UI, so Kivo is one process on one port. */
+const SERVE_UI = process.argv.includes("--serve")
 const PROXY_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
+/** Headers the API client may not set: they describe the connection, which the daemon owns. */
+const HOP_HEADERS = new Set(["host", "connection", "content-length", "transfer-encoding", "keep-alive", "upgrade", "te", "trailer", "proxy-authorization", "proxy-connection", "expect"])
+const PROXY_MAX_BODY = 2_000_000
+
+const [major, minor] = process.versions.node.split(".").map(Number)
+if (major < 22 || (major === 22 && minor < 9)) {
+  console.error(`[kivo] Node ${process.versions.node} is too old — Kivo needs Node 22.9 or newer.`)
+  process.exit(1)
+}
 
 // A bug in one request must never take down the terminal, running services and other builds with it.
 process.on("unhandledRejection", (err) => console.error("[kivo] unhandled rejection:", err))
@@ -31,21 +45,23 @@ process.on("uncaughtException", (err) => console.error("[kivo] uncaught exceptio
 await ensureWorkspace()
 await checkAll()
 
-const originOk = (req: http.IncomingMessage) => !req.headers.origin || ALLOWED.has(req.headers.origin)
-
 /** Editor language note for inline edits, from the file being edited rather than a fixed assumption. */
 function editNote(file: string) {
   const ext = path.extname(file).slice(1)
   const lang = { py: "Python 3.9 (typing.Optional, no X | Y unions)", ts: "TypeScript", tsx: "TypeScript + React", js: "JavaScript", java: "Java", kt: "Kotlin", go: "Go", rs: "Rust", sql: "SQL" }[ext]
-  return `Project: ${PROJECT}. ${lang ? `This file is ${lang}.` : ""}`.trim()
+  return `Project: ${project().name}. ${lang ? `This file is ${lang}.` : ""}`.trim()
 }
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost")
+  if (!hostOk(req)) return json(res, 421, { error: "Kivo only answers on localhost" })
   if (!originOk(req)) return json(res, 403, { error: "origin not allowed" })
 
   try {
-    if (url.pathname === "/api/health") return json(res, 200, { ...describe(), ai: aiAvailable(), model: currentModel(), project: PROJECT, toolchains: await allToolchains() })
+    if (url.pathname === "/api/health") return json(res, 200, { ...describe(), ai: aiAvailable(), model: currentModel(), project: project().name, projectInfo: publicProject(project()), toolchains: await allToolchains() })
+
+    // Feature modules own their routes (projects, editor, source control, agent).
+    for (const h of [handleProjects, handleEditor, handleScm, handleAgent]) if (await h(req, res, url)) return
 
     if (url.pathname === "/api/providers" && req.method === "GET") return json(res, 200, await checkAll())
 
@@ -71,9 +87,19 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true })
     }
 
+    if (url.pathname === "/api/terminals" && req.method === "GET") return json(res, 200, { terminals: listTerminals() })
+
+    if (url.pathname === "/api/terminals" && req.method === "DELETE") {
+      const id = requireString(url.searchParams.get("id"), "id", 64)
+      return json(res, killTerminal(id) ? 200 : 404, { ok: true })
+    }
+
     if (url.pathname === "/api/git/log") {
-      const { stdout } = await git(["log", "--stat", "--format=%h%x09%s%x09%ar", "-n", "15"])
-      return json(res, 200, { log: stdout })
+      const log = await (isGitRepo() ? git(["log", "--stat", "--format=%h%x09%s%x09%ar", "-n", "15"]) : Promise.reject()).then(
+        (r) => r.stdout,
+        () => "",
+      )
+      return json(res, 200, { log })
     }
 
     if (url.pathname === "/api/proxy" && req.method === "POST") {
@@ -87,7 +113,8 @@ const server = http.createServer(async (req, res) => {
       const base = serviceUrl(service)
       if (!base) return json(res, 404, { error: `${service} is not running` })
       const headers: Record<string, string> = { "Content-Type": "application/json" }
-      if (b.headers && typeof b.headers === "object") for (const [k, v] of Object.entries(b.headers)) if (typeof v === "string") headers[k] = v
+      if (b.headers && typeof b.headers === "object")
+        for (const [k, v] of Object.entries(b.headers)) if (typeof v === "string" && /^[!#-'*+.^-`|~\w]+$/.test(k) && !HOP_HEADERS.has(k.toLowerCase())) headers[k] = v
       const started = performance.now()
       try {
         const r = await fetch(base + target, {
@@ -96,7 +123,7 @@ const server = http.createServer(async (req, res) => {
           body: ["GET", "HEAD"].includes(method) || typeof b.body !== "string" ? undefined : b.body,
           signal: AbortSignal.timeout(30_000),
         })
-        const text = (await r.text()).slice(0, 2_000_000)
+        const text = await readCapped(r, PROXY_MAX_BODY)
         return json(res, 200, { status: r.status, statusText: r.statusText, ms: Math.round(performance.now() - started), headers: Object.fromEntries(r.headers), body: text })
       } catch (err) {
         const timedOut = (err as Error).name === "TimeoutError"
@@ -199,6 +226,8 @@ const server = http.createServer(async (req, res) => {
       return res.end()
     }
 
+    if (SERVE_UI && !url.pathname.startsWith("/api/") && serveUi(req, res, url.pathname)) return
+
     json(res, 404, { error: "not found" })
   } catch (err) {
     const e = err as Error & { code?: string }
@@ -214,61 +243,41 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
+/** Read at most `max` bytes of a response body, then stop downloading. */
+async function readCapped(r: Response, max: number) {
+  if (!r.body) return ""
+  const reader = r.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    size += value.length
+    if (size >= max) {
+      await reader.cancel().catch(() => {})
+      break
+    }
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks).subarray(0, max))
+}
+
 server.on("clientError", (_err, socket) => {
   if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\n\r\n")
 })
 
-// ─── Terminal: a real shell in the project workspace ─────────────────────────
+// ─── Terminal: persistent shells in the project workspace (see terminals.ts) ──
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 })
-const terminals = new Set<pty.IPty>()
 
 server.on("upgrade", (req, socket, head) => {
-  if (!req.url?.startsWith("/ws/terminal") || !originOk(req) || !req.headers.origin) {
+  const url = new URL(req.url ?? "/", "http://localhost")
+  // A WebSocket upgrade must come from the Kivo UI itself — browsers always send Origin here.
+  if (url.pathname !== "/ws/terminal" || !hostOk(req) || !req.headers.origin || !originOk(req)) {
     socket.destroy()
     return
   }
-  wss.handleUpgrade(req, socket, head, (ws) => {
-    const env = cleanEnv()
-    env.VIRTUAL_ENV = VENV
-    env.PATH = `${path.join(VENV, "bin")}:${env.PATH}`
-    env.TERM = "xterm-256color"
-    env.KIVO = "1"
-    let shell: pty.IPty
-    try {
-      shell = pty.spawn(process.env.SHELL || "/bin/zsh", ["-l"], { name: "xterm-256color", cols: 100, rows: 24, cwd: PROJECT_DIR, env: env as Record<string, string> })
-    } catch (err) {
-      ws.send(`\r\nKivo couldn't start a shell: ${(err as Error).message}\r\n`)
-      ws.close()
-      return
-    }
-    terminals.add(shell)
-    shell.onData((d) => ws.readyState === ws.OPEN && ws.send(d))
-    shell.onExit(() => {
-      terminals.delete(shell)
-      if (ws.readyState === ws.OPEN) ws.close()
-    })
-    ws.on("message", (raw) => {
-      const msg = raw.toString()
-      try {
-        if (msg.startsWith("\u0000resize:")) {
-          const [cols, rows] = msg.slice(8).split("x").map(Number)
-          if (cols > 0 && rows > 0 && cols < 1000 && rows < 1000) shell.resize(cols, rows)
-        } else shell.write(msg)
-      } catch {
-        // the shell already exited; the close handler cleans up
-      }
-    })
-    ws.on("error", () => ws.terminate())
-    ws.on("close", () => {
-      terminals.delete(shell)
-      try {
-        shell.kill()
-      } catch {
-        // already gone
-      }
-    })
-  })
+  wss.handleUpgrade(req, socket, head, (ws) => attachTerminal(ws, url))
 })
 
 server.on("error", (err: NodeJS.ErrnoException) => {
@@ -279,7 +288,8 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   const d = describe()
-  console.log(`kivo daemon  http://127.0.0.1:${PORT}  workspace ${PROJECT_DIR}  active=${d.active}`)
+  console.log(`kivo daemon  http://127.0.0.1:${PORT}  project ${projectDir()}  active=${d.active}`)
+  if (SERVE_UI) console.log(uiBuilt() ? `  ui      open http://localhost:${PORT}` : "  ui      not built — run `npm run build` first")
   for (const p of d.providers) console.log(`  ${p.id.padEnd(7)} ${p.status.padEnd(13)} ${p.message ?? p.models.join(", ")}`)
   allToolchains().then((t) => Object.values(t).forEach((s) => console.log(`  ${s.language.padEnd(7)} ${s.ok ? `ok            ${s.version ?? ""}` : `missing       ${s.message}`}`)))
 })
@@ -288,13 +298,7 @@ server.listen(PORT, "127.0.0.1", () => {
 function shutdown(signal: string) {
   console.log(`[kivo] ${signal} — stopping services and shells`)
   stopAll()
-  for (const t of terminals) {
-    try {
-      t.kill()
-    } catch {
-      // already gone
-    }
-  }
+  killAllTerminals()
   server.close()
   setTimeout(() => process.exit(0), 500).unref()
 }

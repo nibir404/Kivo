@@ -5,9 +5,9 @@ import { analyzeRepository, SAMPLE_REPO } from "@/core/detect"
 import { languageReason, parseIntent } from "@/core/intent"
 import { planFor, testsFor } from "@/core/plan"
 import { logsFor, nextTrace } from "@/core/runtime"
-import { nodesForService, PROJECT_NAME, SEED_EDGES, SEED_EXPERIENCES, SEED_LIBRARY, SEED_NODES } from "@/core/seed"
+import { nodesForService, nodesFromAnalysis, PROJECT_NAME, SEED_EDGES, SEED_EXPERIENCES, SEED_LIBRARY, SEED_NODES } from "@/core/seed"
 import { frameworkName, languageName } from "@/core/stacks"
-import type { Health } from "@/lib/api"
+import type { Health, ProjectInfo } from "@/lib/api"
 import type {
   ContextItem,
   Discipline,
@@ -93,6 +93,8 @@ export interface Prefs {
   buildNotify: boolean
   /** Selecting code with the mouse opens the inline AI prompt (⌘K always works). */
   aiOnSelect: boolean
+  /** Tab autocomplete: AI ghost-text suggestions while typing in the editor. */
+  autocomplete: boolean
 }
 
 export type Dialog = "settings" | "shortcuts" | "welcome" | null
@@ -101,10 +103,14 @@ type BottomTab = "terminal" | "output" | "runtime" | "logs" | "problems" | "git"
 interface State {
   mode: Mode
   discipline: Discipline
+  /** The open section of a non-software workspace (null = its overview). */
+  workspaceSection: string | null
   level: Level
   depthSignals: number
   analysis: ProjectAnalysis
   project: string
+  /** The open project on disk (null until the daemon has answered). */
+  projectInfo: ProjectInfo | null
   stack: StackChoice
   ai: Health | null
   daemon: boolean
@@ -148,6 +154,9 @@ interface State {
 
   setMode: (m: Mode) => void
   setDiscipline: (d: Discipline) => void
+  /** Load a project: its files and analysis, with everything project-scoped reset. */
+  loadProject: (info: ProjectInfo, analysis: ProjectAnalysis, files: string[]) => void
+  openWorkspaceSection: (id: string | null) => void
   setLevel: (l: Level) => void
   noteDepth: () => boolean
   setStack: (s: Partial<StackChoice>) => void
@@ -234,10 +243,12 @@ export const useKivo = create<State>()(
     (set, get) => ({
       mode: "build",
       discipline: "software",
+      workspaceSection: null,
       level: "intermediate",
       depthSignals: 0,
       analysis: analyzeRepository(SAMPLE_REPO),
       project: PROJECT_NAME,
+      projectInfo: null,
       stack: { language: "python", framework: "fastapi", database: "PostgreSQL", cache: "Redis" },
       ai: null,
       daemon: false,
@@ -285,12 +296,40 @@ export const useKivo = create<State>()(
       commandOpen: false,
       dialog: null,
       welcomed: false,
-      prefs: { focusCode: true, captureToolbar: true, buildNotify: true, aiOnSelect: true },
+      prefs: { focusCode: true, captureToolbar: true, buildNotify: true, aiOnSelect: true, autocomplete: true },
       noteFor: null,
       experienceDraftOpen: false,
 
       setMode: (mode) => set({ mode }),
-      setDiscipline: (discipline) => set({ discipline }),
+      setDiscipline: (discipline) => set((s) => ({ discipline, workspaceSection: null, mode: s.mode === "code" || s.mode === "library" ? s.mode : "build" })),
+      openWorkspaceSection: (workspaceSection) => set({ workspaceSection, mode: "build" }),
+      loadProject: (info, analysis, files) =>
+        set((s) => {
+          const same = s.projectInfo?.id === info.id
+          if (same) return { projectInfo: info, project: info.name, analysis, files }
+          // Another project: nothing from the previous one (tabs, services, graph, build, logs) carries over.
+          const demo = info.kind === "demo"
+          return {
+            projectInfo: info,
+            project: info.name,
+            analysis,
+            files,
+            openFiles: [],
+            activeFile: null,
+            fileCache: {},
+            services: demo ? EXISTING : [],
+            nodes: demo ? SEED_NODES : nodesFromAnalysis(analysis),
+            edges: demo ? SEED_EDGES : [],
+            draft: null,
+            build: null,
+            understanding: null,
+            activeServiceId: null,
+            workspaceSection: null,
+            traces: [],
+            logs: [],
+            selection: null,
+          }
+        }),
       setLevel: (level) => set({ level, depthSignals: 0 }),
       /** Records that the user drilled deeper than their level. Returns true when Kivo should suggest levelling up. */
       noteDepth: () => {
@@ -479,6 +518,7 @@ export const useKivo = create<State>()(
       partialize: (s) => ({
         level: s.level,
         discipline: s.discipline,
+        workspaceSection: s.workspaceSection,
         library: s.library,
         experiences: s.experiences,
         personalContext: s.personalContext,

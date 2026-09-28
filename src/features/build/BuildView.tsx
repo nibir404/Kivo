@@ -15,6 +15,7 @@ import type { ServiceSpec, ServiceStatus, TechCategory } from "@/core/types"
 import { cn } from "@/lib/utils"
 import { build as runBuild, openFile, understand } from "@/state/runners"
 import { useKivo } from "@/state/store"
+import { WorkspaceView } from "@/features/workspace/WorkspaceView"
 import { ApiClient } from "./ApiClient"
 import { BuildTimeline } from "./BuildTimeline"
 import { Journey, useTechnical } from "./journey"
@@ -23,7 +24,9 @@ import { Capturable, CaptureScope, useUi } from "@/shell/capture"
 import { focusWhenReady } from "@/shell/Preferences"
 
 export function BuildView() {
-  const { draft, activeServiceId, understanding } = useKivo()
+  const { draft, activeServiceId, understanding, discipline } = useKivo()
+  // Other disciplines have their own home and sections; the intent → build flow is Software's.
+  if (discipline !== "software") return <WorkspaceView />
   if (understanding) return <Understanding />
   if (draft) return <IntentReview key={`${draft.id}:${draft.intent}`} spec={draft} />
   if (activeServiceId) return <ServiceWorkspace id={activeServiceId} />
@@ -54,7 +57,7 @@ function BuildHome() {
     ;(acc[d.category] ??= []).push(d)
     return acc
   }, {})
-  const order: TechCategory[] = ["Mobile", "Frontend", "Backend", "Database", "Cache", "Infrastructure", "AI / ML", "Testing", "Tooling"]
+  const order: TechCategory[] = ["Mobile", "Frontend", "Backend", "Database", "Cache", "Data", "Infrastructure", "AI / ML", "Embedded", "Game", "Security", "Testing", "Tooling"]
   const lastBuilt = build ? services.find((s) => s.id === build.specId) : undefined
   const paths = [
     { icon: Network, title: "Explore the architecture", body: "How the pieces connect", go: () => setMode("learn") },

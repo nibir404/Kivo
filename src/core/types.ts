@@ -149,6 +149,10 @@ export type TechCategory =
   | "Cache"
   | "Infrastructure"
   | "AI / ML"
+  | "Data"
+  | "Embedded"
+  | "Game"
+  | "Security"
   | "Testing"
   | "Tooling"
 
@@ -159,7 +163,7 @@ export interface Detection {
   confidence: number
 }
 
-export type Discipline = "software" | "ml" | "rl" | "security" | "devops"
+export type Discipline = "software" | "frontend" | "data" | "ml" | "rl" | "security" | "devops" | "embedded" | "game"
 
 export interface ProjectAnalysis {
   detections: Detection[]

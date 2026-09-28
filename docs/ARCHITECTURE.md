@@ -170,7 +170,9 @@ Agents communicate only through the graphs and the IR — never free-form chat w
 
 `analyzeRepository(files)` (`src/core/detect.ts`) runs rule-based detectors over manifests and config: languages (by line share), frameworks, package managers, databases, caches, infra (Docker, Kubernetes), AI/ML (PyTorch, CUDA, Gymnasium), test frameworks. Output is a list of `Detection { tech, category, evidence, confidence }`. The evidence path is always shown so the user can verify the claim.
 
-The detected disciplines drive the **adaptive workspace**: Software, AI/ML, RL, Security, DevOps are lenses over the same engine, not separate products.
+The detected disciplines drive the **adaptive workspace**: Software, Web & Mobile, Data Engineering, AI/ML, RL, Security, DevOps, Embedded/IoT and Game Development are lenses over the same engine, not separate products.
+
+Each non-software workspace is a `WorkspaceDef` (`src/features/workspace/defs/*.ts`): vocabulary, accent hue, home screen, example prompts, and sections. A section's `build(ctx)` is a pure function of the project context (files, detections, services, system graph, logs, traces) that returns typed panels (table, metrics with charts, board, checklist, timeline) plus its **source** — `project` (with evidence), `example` or `guide` — so the UI can always say what is real. `tests/workspaces.test.ts` builds every section against several repositories, including an empty one, where nothing may claim to be real.
 
 ---
 
@@ -355,15 +357,17 @@ The `core/` modules have the same inputs and outputs the production agents and s
 
 ```
 Browser UI ──/api (HTTP+SSE)──▶ Kivo daemon (127.0.0.1:5175) ──▶ Groq (gpt-oss-120b ⇄ gpt-oss-20b)
-           ──/ws/terminal────▶   ├─ pty login shell in the workspace
+           ──/ws/terminal────▶   ├─ persistent pty sessions (survive reloads, replay scrollback)
                                  ├─ workspace fs (confined) + git
                                  └─ build pipeline ──▶ pip · pyflakes · pytest · uvicorn
 ```
 
 ```
 server/
-  index.ts      routes, origin checks, intent normalization, pty terminal
-  groq.ts       streaming client, model pool failover, rate-limit waits, adaptive output caps
+  index.ts      routes, intent normalization, API-client proxy
+  web.ts        Host/Origin policy (DNS-rebinding guard), serving the built UI with security headers
+  terminals.ts  terminal sessions: detach/re-attach, replay buffer, flow control, idle expiry
+  ai.ts         streaming client, provider/model failover, rate-limit waits, stall watchdog
   pipeline.ts   plan execution: codegen → install → lint/autofix → test → repair → boot → commit
   prompts.ts    Intent / Implementation / Repair agent prompts and conventions
   scaffold.ts   deterministic infrastructure templates (db, outbox, kv, test fixtures)

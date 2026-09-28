@@ -9,6 +9,7 @@ import { CONCEPTS } from "@/core/concepts"
 import type { KivoRef } from "@/core/types"
 import { cn } from "@/lib/utils"
 import { useKivo } from "@/state/store"
+import { useTerminals } from "./terminal/store"
 
 /**
  * Explain & Capture — the signature interaction.
@@ -26,8 +27,12 @@ interface UiState {
   askFocusTick: number
   rightOpenTick: number
   bottomOpenTick: number
-  /** A command queued for the integrated terminal (typed into the live shell). */
-  terminalCmd: { id: number; cmd: string } | null
+  /** Which project dialog is open. */
+  projectDialog: "open" | "clone" | null
+  setProjectDialog: (d: "open" | "clone" | null) => void
+  /** The bottom panel is maximized over the workspace. */
+  bottomMax: boolean
+  toggleBottomMax: () => void
   setAnchor: (a: UiState["anchor"], ref: KivoRef | null, el?: Node | null) => void
   setExplainFocus: (f: UiState["explainFocus"]) => void
   focusAsk: () => void
@@ -49,7 +54,10 @@ export const useUi = create<UiState>((set) => ({
   askFocusTick: 0,
   rightOpenTick: 0,
   bottomOpenTick: 0,
-  terminalCmd: null,
+  bottomMax: false,
+  projectDialog: null,
+  setProjectDialog: (projectDialog) => set({ projectDialog }),
+  toggleBottomMax: () => set((s) => ({ bottomMax: !s.bottomMax, bottomOpenTick: s.bottomOpenTick + 1 })),
   resetLayoutTick: 0,
   prefill: null,
   setPrefill: (prefill) => set({ prefill }),
@@ -60,7 +68,8 @@ export const useUi = create<UiState>((set) => ({
   openRight: () => set((s) => ({ rightOpenTick: s.rightOpenTick + 1 })),
   runInTerminal: (cmd) => {
     useKivo.getState().setBottomTab("terminal")
-    set((s) => ({ bottomOpenTick: s.bottomOpenTick + 1, terminalCmd: { id: Date.now(), cmd } }))
+    set((s) => ({ bottomOpenTick: s.bottomOpenTick + 1 }))
+    useTerminals.getState().run(cmd)
   },
 }))
 

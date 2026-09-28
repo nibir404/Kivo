@@ -36,6 +36,32 @@ const RULES: Rule[] = [
   { tech: "PyTorch", category: "AI / ML", file: /(pyproject\.toml|requirements\.txt)$/, contains: /torch/i, confidence: 0.97 },
   { tech: "CUDA", category: "AI / ML", file: /Dockerfile.*$/, contains: /nvidia\/cuda/i, confidence: 0.85 },
   { tech: "Gymnasium", category: "AI / ML", file: /(pyproject\.toml|requirements\.txt)$/, contains: /gymnasium/i, confidence: 0.95 },
+  { tech: "TensorFlow", category: "AI / ML", file: /(pyproject\.toml|requirements\.txt)$/, contains: /tensorflow/i, confidence: 0.95 },
+  { tech: "scikit-learn", category: "AI / ML", file: /(pyproject\.toml|requirements\.txt)$/, contains: /scikit-learn|sklearn/i, confidence: 0.95 },
+  { tech: "MLflow", category: "AI / ML", file: /(pyproject\.toml|requirements\.txt)$/, contains: /mlflow/i, confidence: 0.9 },
+  { tech: "Weights & Biases", category: "AI / ML", file: /(pyproject\.toml|requirements\.txt)$/, contains: /wandb/i, confidence: 0.9 },
+  { tech: "Stable-Baselines3", category: "AI / ML", file: /(pyproject\.toml|requirements\.txt)$/, contains: /stable-baselines3/i, confidence: 0.95 },
+  { tech: "Next.js", category: "Frontend", file: /package\.json$/, contains: /"next"/, confidence: 0.97 },
+  { tech: "Vue", category: "Frontend", file: /package\.json$/, contains: /"vue"/, confidence: 0.95 },
+  { tech: "Svelte", category: "Frontend", file: /package\.json$/, contains: /"svelte"/, confidence: 0.95 },
+  { tech: "Tailwind CSS", category: "Frontend", file: /(package\.json|tailwind\.config\.\w+)$/, contains: /tailwind|content:/, confidence: 0.9 },
+  { tech: "Flutter", category: "Mobile", file: /pubspec\.yaml$/, contains: /flutter/, confidence: 0.97 },
+  { tech: "dbt", category: "Data", file: /dbt_project\.yml$/, confidence: 0.99 },
+  { tech: "Airflow", category: "Data", file: /(pyproject\.toml|requirements\.txt|dags\/.*\.py)$/, contains: /airflow/i, confidence: 0.95 },
+  { tech: "Spark", category: "Data", file: /(pyproject\.toml|requirements\.txt)$/, contains: /pyspark/i, confidence: 0.95 },
+  { tech: "pandas", category: "Data", file: /(pyproject\.toml|requirements\.txt)$/, contains: /pandas/i, confidence: 0.9 },
+  { tech: "PlatformIO", category: "Embedded", file: /platformio\.ini$/, confidence: 0.99 },
+  { tech: "Arduino", category: "Embedded", file: /\.ino$/, confidence: 0.95 },
+  { tech: "ESP-IDF", category: "Embedded", file: /(sdkconfig|idf_component\.yml)$/, confidence: 0.9 },
+  { tech: "Zephyr", category: "Embedded", file: /(prj\.conf|west\.yml)$/, confidence: 0.85 },
+  { tech: "Unity", category: "Game", file: /ProjectSettings\/ProjectVersion\.txt$/, confidence: 0.99 },
+  { tech: "Godot", category: "Game", file: /project\.godot$/, confidence: 0.99 },
+  { tech: "Unreal Engine", category: "Game", file: /\.uproject$/, confidence: 0.99 },
+  { tech: "Terraform", category: "Infrastructure", file: /\.tf$/, confidence: 0.95 },
+  { tech: "Helm", category: "Infrastructure", file: /Chart\.yaml$/, confidence: 0.95 },
+  { tech: "GitHub Actions", category: "Infrastructure", file: /\.github\/workflows\/.*\.ya?ml$/, confidence: 0.99 },
+  { tech: "Semgrep", category: "Security", file: /\.semgrep(\.ya?ml|\/)/, confidence: 0.95 },
+  { tech: "Dependabot", category: "Security", file: /\.github\/dependabot\.ya?ml$/, confidence: 0.99 },
   { tech: "pytest", category: "Testing", file: /(pyproject\.toml|requirements\.txt|pytest\.ini)$/, contains: /pytest/i, confidence: 0.95 },
   { tech: "Jest", category: "Testing", file: /package\.json$/, contains: /"jest"/, confidence: 0.95 },
 ]
@@ -80,13 +106,23 @@ export function analyzeRepository(files: RepoFile[]): ProjectAnalysis {
   const detections = [...found.values()]
   const has = (cat: TechCategory) => detections.some((d) => d.category === cat)
   const recommended: Discipline[] = ["software"]
-  if (has("AI / ML")) recommended.push(detections.some((d) => d.tech === "Gymnasium") ? "rl" : "ml")
-  if (detections.some((d) => d.tech === "Kubernetes")) recommended.push("devops")
+  const tech = (...names: string[]) => detections.some((d) => names.includes(d.tech))
+  if (has("Frontend") || has("Mobile")) recommended.push("frontend")
+  if (has("Data")) recommended.push("data")
+  if (tech("Gymnasium", "Stable-Baselines3")) recommended.push("rl")
+  if (has("AI / ML") && detections.some((d) => d.category === "AI / ML" && !["Gymnasium", "Stable-Baselines3"].includes(d.tech))) recommended.push("ml")
+  if (has("Security")) recommended.push("security")
+  if (tech("Kubernetes", "Terraform", "Helm", "GitHub Actions")) recommended.push("devops")
+  if (has("Embedded")) recommended.push("embedded")
+  if (has("Game")) recommended.push("game")
 
   const parts = [
     has("Mobile") ? "Mobile" : has("Frontend") ? "Web" : null,
     has("Backend") ? "Backend" : null,
     has("AI / ML") ? "ML" : null,
+    has("Data") ? "Data" : null,
+    has("Embedded") ? "Embedded" : null,
+    has("Game") ? "Game" : null,
   ].filter(Boolean)
 
   return {
